@@ -1,75 +1,112 @@
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { useState } from 'react';
+import { Card } from "@/components/ui/card";
+import { useMemo, useState } from "react";
+import StockChart, { ChartRange } from "@/components/market/StockChart";
 
 interface DataPoint {
   date: string;
   value: number;
+  timestamp?: number;
 }
 
 interface PerformanceChartProps {
   data: DataPoint[];
 }
 
-const timeframes = ['1D', '1W', '1M', '1Y', 'All'] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = DAY_MS * 7;
+const MONTH_MS = WEEK_MS * 4;
 
 export default function PerformanceChart({ data }: PerformanceChartProps) {
-  const [selectedTimeframe, setSelectedTimeframe] = useState<typeof timeframes[number]>('1W');
+  const [range, setRange] = useState<ChartRange>("1W");
+
+  const { chartData, latestValue, weekChangePercent, monthChangePercent, priceDomain } =
+    useMemo(() => {
+      if (!data.length) {
+        return {
+          chartData: [],
+          latestValue: 0,
+          weekChangePercent: null,
+          monthChangePercent: null,
+          priceDomain: undefined,
+        };
+      }
+
+      const baseTimestamp = Date.now() - (data.length - 1) * DAY_MS;
+
+      const normalized = data
+        .map((point, index) => {
+          const parsed = point.timestamp ?? Date.parse(point.date);
+          const timestamp = Number.isNaN(parsed)
+            ? baseTimestamp + index * DAY_MS
+            : parsed;
+          const dateLabel = new Date(timestamp).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+          });
+          return {
+            time: dateLabel,
+            price: point.value,
+            timestamp,
+          };
+        })
+        .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+
+      const latest = normalized[normalized.length - 1];
+      const latestTs = latest?.timestamp ?? Date.now();
+
+      const referenceFor = (
+        sorted: typeof normalized,
+        windowMs: number,
+        latestTimestamp: number,
+      ) => {
+        const threshold = latestTimestamp - windowMs;
+        return (
+          [...sorted]
+            .reverse()
+            .find((entry) => entry.timestamp && entry.timestamp <= threshold) ||
+          sorted[0]
+        );
+      };
+
+      const changeFrom = (
+        currentPrice: number,
+        reference?: { price: number } | null,
+      ) => {
+        if (!reference?.price) return null;
+        if (!currentPrice) return null;
+        return ((currentPrice - reference.price) / reference.price) * 100;
+      };
+
+      const weekRef = referenceFor(normalized, WEEK_MS, latestTs);
+      const monthRef = referenceFor(normalized, MONTH_MS, latestTs);
+
+      const values = normalized.map((point) => point.price);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const padding = Math.max((max - min) * 0.1, min * 0.05 || 10);
+      const domain: [number, number] = [Math.max(0, min - padding), max + padding];
+
+      return {
+        chartData: normalized,
+        latestValue: latest?.price ?? 0,
+        weekChangePercent: changeFrom(latest?.price ?? 0, weekRef),
+        monthChangePercent: changeFrom(latest?.price ?? 0, monthRef),
+        priceDomain: domain,
+      };
+    }, [data]);
 
   return (
     <Card className="p-6" data-testid="performance-chart">
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Portfolio Performance</h2>
-          <div className="flex gap-1">
-            {timeframes.map((tf) => (
-              <Button
-                key={tf}
-                variant={selectedTimeframe === tf ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setSelectedTimeframe(tf)}
-                data-testid={`button-timeframe-${tf}`}
-              >
-                {tf}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis
-                dataKey="date"
-                stroke="hsl(var(--muted-foreground))"
-                fontSize={12}
-              />
-              <YAxis
-                stroke="hsl(var(--muted-foreground))"
-                fontSize={12}
-                tickFormatter={(value) => `$${value}`}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'hsl(var(--popover))',
-                  border: '1px solid hsl(var(--border))',
-                  borderRadius: '6px',
-                }}
-                labelStyle={{ color: 'hsl(var(--foreground))' }}
-              />
-              <Line
-                type="monotone"
-                dataKey="value"
-                stroke="hsl(var(--primary))"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      <StockChart
+        teamName="Portfolio"
+        data={chartData}
+        range={range}
+        onRangeChange={setRange}
+        price={latestValue}
+        weekChangePercent={weekChangePercent}
+        monthChangePercent={monthChangePercent}
+        priceDomain={priceDomain}
+      />
     </Card>
   );
 }

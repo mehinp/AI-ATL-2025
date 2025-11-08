@@ -40,8 +40,20 @@ export const teamMetadata: TeamMetadata[] = [
   { city: "Minnesota", nickname: "Vikings", abbreviation: "MIN", division: "NFC North" },
   { city: "New England", nickname: "Patriots", abbreviation: "NE", division: "AFC East", aliases: ["NWE"] },
   { city: "New Orleans", nickname: "Saints", abbreviation: "NO", division: "NFC South", aliases: ["NOS"] },
-  { city: "New York", nickname: "Giants", abbreviation: "NYG", division: "NFC East" },
-  { city: "New York", nickname: "Jets", abbreviation: "NYJ", division: "AFC East" },
+  {
+    city: "New York",
+    nickname: "Giants",
+    abbreviation: "NYG",
+    division: "NFC East",
+    aliases: ["New York Giants", "New York G", "NYG"],
+  },
+  {
+    city: "New York",
+    nickname: "Jets",
+    abbreviation: "NYJ",
+    division: "AFC East",
+    aliases: ["New York Jets", "New York J", "NYJ"],
+  },
   { city: "Philadelphia", nickname: "Eagles", abbreviation: "PHI", division: "NFC East" },
   { city: "Pittsburgh", nickname: "Steelers", abbreviation: "PIT", division: "AFC North" },
   { city: "San Francisco", nickname: "49ers", abbreviation: "SF", division: "NFC West" },
@@ -79,6 +91,7 @@ export function findTeamMetadata(name: string): TeamMetadata | undefined {
   }
 
   for (const [storedKey, team] of metadataMap) {
+    if (storedKey.length < 4) continue;
     if (key.includes(storedKey) || storedKey.includes(key)) {
       return team;
     }

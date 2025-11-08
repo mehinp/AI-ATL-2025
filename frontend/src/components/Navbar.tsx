@@ -1,6 +1,9 @@
-import { Link, useLocation } from 'wouter';
-import { LayoutDashboard, Radio, Briefcase, TrendingUp } from 'lucide-react';
-import ThemeToggle from './ThemeToggle';
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "wouter";
+import { LayoutDashboard, Radio, Briefcase, TrendingUp, LogOut } from "lucide-react";
+import ThemeToggle from "./ThemeToggle";
+import { Button } from "@/components/ui/button";
+import { authSession, SESSION_EVENT } from "@/lib/api";
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -10,7 +13,29 @@ const navItems = [
 ];
 
 export default function Navbar() {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
+  const [session, setSession] = useState(() => authSession.getUser());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const syncSession = () => setSession(authSession.getUser());
+    const handleSessionEvent = () => syncSession();
+    syncSession();
+
+    window.addEventListener("storage", syncSession);
+    window.addEventListener(SESSION_EVENT, handleSessionEvent);
+    return () => {
+      window.removeEventListener("storage", syncSession);
+      window.removeEventListener(SESSION_EVENT, handleSessionEvent);
+    };
+  }, []);
+
+  const handleSignOut = () => {
+    authSession.clear();
+    setSession(null);
+    navigate("/");
+  };
 
   return (
     <nav className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -29,7 +54,9 @@ export default function Navbar() {
                 loading="eager"
                 decoding="async"
               />
-              <span className="text-primary">NFLXchange</span>
+              <span className="text-primary font-mono text-lg tracking-tight">
+                NFLXchange
+              </span>
             </Link>
             
             <div className="hidden md:flex items-center gap-1">
@@ -55,7 +82,25 @@ export default function Navbar() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {session && (
+              <div className="flex flex-col text-xs sm:text-sm text-muted-foreground leading-tight max-w-[220px] truncate">
+                <span className="font-semibold text-foreground truncate">{session.email}</span>
+                <span className="uppercase tracking-wide text-[10px] text-muted-foreground/80">
+                  Trader
+                </span>
+              </div>
+            )}
+            <Button
+              variant={session ? "outline" : "ghost"}
+              size="sm"
+              className="gap-1 text-xs"
+              onClick={handleSignOut}
+              disabled={!session}
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{session ? "Sign out" : "Sign in"}</span>
+            </Button>
             <ThemeToggle />
           </div>
         </div>

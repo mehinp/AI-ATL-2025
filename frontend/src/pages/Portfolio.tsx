@@ -1,8 +1,9 @@
-import Navbar from '@/components/Navbar';
-import StockHoldingCard from '@/components/portfolio/StockHoldingCard';
-import PerformanceChart from '@/components/portfolio/PerformanceChart';
-import TransactionHistory from '@/components/portfolio/TransactionHistory';
-import PortfolioStats from '@/components/portfolio/PortfolioStats';
+import Navbar from "@/components/Navbar";
+import StockHoldingCard from "@/components/portfolio/StockHoldingCard";
+import PerformanceChart from "@/components/portfolio/PerformanceChart";
+import TransactionHistory from "@/components/portfolio/TransactionHistory";
+import PortfolioStats from "@/components/portfolio/PortfolioStats";
+import { useMarketNavigation } from "@/hooks/useMarketNavigation";
 
 // TODO: remove mock data
 const mockHoldings = [
@@ -50,6 +51,8 @@ const mockTransactions = [
 ];
 
 export default function Portfolio() {
+  const navigateToMarket = useMarketNavigation();
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -72,6 +75,7 @@ export default function Portfolio() {
                       key={index}
                       {...holding}
                       onSell={() => console.log(`Sell ${holding.team.name}`)}
+                      onSelectTeam={navigateToMarket}
                     />
                   ))}
                 </div>
@@ -86,7 +90,10 @@ export default function Portfolio() {
                 dayChangePercent={3.56}
               />
               
-              <TransactionHistory transactions={mockTransactions} />
+              <TransactionHistory
+                transactions={mockTransactions}
+                onSelectTeam={navigateToMarket}
+              />
             </div>
           </div>
         </div>

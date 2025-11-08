@@ -1,8 +1,9 @@
-import { Card } from '@/components/ui/card';
-import { DollarSign, TrendingUp, Wallet, Briefcase } from 'lucide-react';
-import PriceDisplay from '../shared/PriceDisplay';
-import PercentageChange from '../shared/PercentageChange';
-import StatCard from '../shared/StatCard';
+import { Card } from "@/components/ui/card";
+import { TrendingUp, Wallet, Briefcase } from "lucide-react";
+import PriceDisplay from "../shared/PriceDisplay";
+import PercentageChange from "../shared/PercentageChange";
+import StatCard from "../shared/StatCard";
+import { formatCurrency, formatNumber } from "@/lib/number-format";
 
 interface PortfolioSummaryProps {
   totalValue: number;
@@ -17,8 +18,12 @@ export default function PortfolioSummary({
   dayChange,
   dayChangePercent,
   cashBalance,
-  holdingsCount
+  holdingsCount,
 }: PortfolioSummaryProps) {
+  const signedDayChange = `${dayChange >= 0 ? "+" : "-"}${formatCurrency(
+    Math.abs(dayChange),
+  )}`;
+
   return (
     <Card className="p-6" data-testid="portfolio-summary">
       <div className="space-y-6">
@@ -28,8 +33,12 @@ export default function PortfolioSummary({
             <PriceDisplay price={totalValue} size="lg" />
             <PercentageChange value={dayChangePercent} size="md" />
           </div>
-          <div className={`text-sm font-medium mt-2 ${dayChange >= 0 ? 'text-success' : 'text-danger'}`}>
-            {dayChange >= 0 ? '+' : ''}${Math.abs(dayChange).toFixed(2)} today
+          <div
+            className={`text-sm font-medium mt-2 ${
+              dayChange >= 0 ? "text-success" : "text-danger"
+            }`}
+          >
+            {signedDayChange} today
           </div>
         </div>
 
@@ -37,18 +46,18 @@ export default function PortfolioSummary({
           <StatCard
             icon={Wallet}
             label="Cash Balance"
-            value={`$${cashBalance.toFixed(2)}`}
+            value={formatCurrency(cashBalance)}
           />
           <StatCard
             icon={Briefcase}
             label="Holdings"
-            value={holdingsCount}
+            value={formatNumber(holdingsCount, { maximumFractionDigits: 0 })}
             subtitle="Teams"
           />
           <StatCard
             icon={TrendingUp}
             label="Day P&L"
-            value={`${dayChange >= 0 ? '+' : ''}$${Math.abs(dayChange).toFixed(2)}`}
+            value={signedDayChange}
           />
         </div>
       </div>

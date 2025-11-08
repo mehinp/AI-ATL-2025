@@ -1,10 +1,17 @@
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useState } from 'react';
-import { Minus, Plus } from 'lucide-react';
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useState } from "react";
+import { Minus, Plus } from "lucide-react";
+import { formatCurrency, formatNumber } from "@/lib/number-format";
 
 interface Team {
   id: string;
@@ -18,9 +25,9 @@ interface QuickTradeWidgetProps {
 }
 
 export default function QuickTradeWidget({ teams }: QuickTradeWidgetProps) {
-  const [selectedTeam, setSelectedTeam] = useState<string>('');
+  const [selectedTeam, setSelectedTeam] = useState<string>("");
   const [quantity, setQuantity] = useState(1);
-  const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
+  const [tradeType, setTradeType] = useState<"buy" | "sell">("buy");
 
   const selectedTeamData = teams.find(t => t.id === selectedTeam);
   const totalCost = selectedTeamData ? selectedTeamData.price * quantity : 0;
@@ -32,7 +39,7 @@ export default function QuickTradeWidget({ teams }: QuickTradeWidgetProps) {
   return (
     <Card className="p-6" data-testid="quick-trade-widget">
       <h2 className="text-lg font-semibold mb-4">Quick Trade</h2>
-      
+
       <div className="space-y-4">
         <div>
           <Label htmlFor="team-select">Select Team</Label>
@@ -41,9 +48,9 @@ export default function QuickTradeWidget({ teams }: QuickTradeWidgetProps) {
               <SelectValue placeholder="Choose a team" />
             </SelectTrigger>
             <SelectContent>
-              {teams.map(team => (
+              {teams.map((team) => (
                 <SelectItem key={team.id} value={team.id}>
-                  {team.name} (${team.price.toFixed(2)})
+                  {team.name} ({formatCurrency(team.price)})
                 </SelectItem>
               ))}
             </SelectContent>
@@ -85,7 +92,7 @@ export default function QuickTradeWidget({ teams }: QuickTradeWidgetProps) {
           <Button
             variant={tradeType === 'buy' ? 'default' : 'outline'}
             className="flex-1"
-            onClick={() => setTradeType('buy')}
+              onClick={() => setTradeType("buy")}
             data-testid="button-trade-type-buy"
           >
             Buy
@@ -93,7 +100,7 @@ export default function QuickTradeWidget({ teams }: QuickTradeWidgetProps) {
           <Button
             variant={tradeType === 'sell' ? 'default' : 'outline'}
             className="flex-1"
-            onClick={() => setTradeType('sell')}
+              onClick={() => setTradeType("sell")}
             data-testid="button-trade-type-sell"
           >
             Sell
@@ -104,15 +111,17 @@ export default function QuickTradeWidget({ teams }: QuickTradeWidgetProps) {
           <div className="p-4 bg-muted rounded-lg">
             <div className="flex justify-between text-sm mb-1">
               <span className="text-muted-foreground">Price per share:</span>
-              <span className="font-mono">${selectedTeamData.price.toFixed(2)}</span>
+              <span className="font-mono">{formatCurrency(selectedTeamData.price)}</span>
             </div>
             <div className="flex justify-between text-sm mb-1">
               <span className="text-muted-foreground">Quantity:</span>
-              <span className="font-mono">{quantity}</span>
+              <span className="font-mono">
+                {formatNumber(quantity, { maximumFractionDigits: 0 })}
+              </span>
             </div>
             <div className="flex justify-between font-semibold pt-2 border-t border-border">
               <span>Total:</span>
-              <span className="font-mono">${totalCost.toFixed(2)}</span>
+              <span className="font-mono">{formatCurrency(totalCost)}</span>
             </div>
           </div>
         )}
@@ -123,7 +132,7 @@ export default function QuickTradeWidget({ teams }: QuickTradeWidgetProps) {
           disabled={!selectedTeam}
           data-testid="button-execute-trade"
         >
-          {tradeType === 'buy' ? 'Buy' : 'Sell'} {selectedTeamData?.abbreviation || 'Team'}
+          {tradeType === "buy" ? "Buy" : "Sell"} {selectedTeamData?.abbreviation || "Team"}
         </Button>
       </div>
     </Card>

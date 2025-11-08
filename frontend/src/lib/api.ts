@@ -7,6 +7,12 @@ const AUTH_USER_EMAIL_KEY = "nflxchange.userEmail";
 const buildUrl = (path: string) => `${API_URL}${path.startsWith("/") ? path : `/${path}`}`;
 
 const isBrowser = typeof window !== "undefined";
+export const SESSION_EVENT = "nflxchange:session";
+
+const notifySessionChange = () => {
+  if (!isBrowser) return;
+  window.dispatchEvent(new CustomEvent(SESSION_EVENT));
+};
 
 export const authSession = {
   getToken(): string | null {
@@ -26,12 +32,14 @@ export const authSession = {
     localStorage.setItem(AUTH_TOKEN_KEY, token);
     localStorage.setItem(AUTH_USER_ID_KEY, String(userId));
     localStorage.setItem(AUTH_USER_EMAIL_KEY, email);
+    notifySessionChange();
   },
   clear() {
     if (!isBrowser) return;
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(AUTH_USER_ID_KEY);
     localStorage.removeItem(AUTH_USER_EMAIL_KEY);
+    notifySessionChange();
   },
   getUser() {
     if (!isBrowser) return null;

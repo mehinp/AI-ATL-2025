@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import Navbar from '@/components/Navbar';
-import LiveGameCard from '@/components/live/LiveGameCard';
-import FlashPickWidget from '@/components/live/FlashPickWidget';
+import { useState } from "react";
+import Navbar from "@/components/Navbar";
+import LiveGameCard from "@/components/live/LiveGameCard";
+import FlashPickWidget from "@/components/live/FlashPickWidget";
+import { useMarketNavigation } from "@/hooks/useMarketNavigation";
 
 // TODO: remove mock data
 const mockGames = [
@@ -40,6 +41,7 @@ const mockFlashPickGame = {
 
 export default function Live() {
   const [selectedGame, setSelectedGame] = useState<string | null>(mockGames[0].id);
+  const navigateToMarket = useMarketNavigation();
 
   return (
     <div className="min-h-screen bg-background">
@@ -59,6 +61,7 @@ export default function Live() {
                   key={game.id}
                   game={game}
                   onClick={() => setSelectedGame(game.id)}
+                  onTeamSelect={navigateToMarket}
                 />
               ))}
             </div>
