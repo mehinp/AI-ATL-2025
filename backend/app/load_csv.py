@@ -1,26 +1,33 @@
 import asyncio
 import pandas as pd
 from datetime import datetime
-from app.database import engine, SessionLocal
+from app.database import SessionLocal
 from app.models import TeamMarketInformation
 
 async def load_csv_to_db():
-    # Read CSV file
-    df = pd.read_csv("team_values_formatted_no_price_volume.csv")  # adjust path if needed
+    df = pd.read_csv("team_values_formatted_no_price_volume.csv")
     print(f"Loaded {len(df)} rows from CSV")
 
-    # Expect columns: team_name, price, value, volume, timestamp (timestamp optional)
     async with SessionLocal() as session:
+        inserted = 0
+        skipped = 0
+
         for _, row in df.iterrows():
+            # skip if value column missing or NaN
+            if "value" not in row or pd.isna(row["value"]):
+                skipped += 1
+                continue
+
             record = TeamMarketInformation(
                 team_name=row["team_name"],
-                value=float(row["value"]) if "value" in row and not pd.isna(row["value"]) else None,
+                value=float(row["value"]),
                 timestamp=pd.to_datetime(row["timestamp"]) if "timestamp" in row else datetime.utcnow(),
             )
             session.add(record)
-        await session.commit()
+            inserted += 1
 
-    print("CSV data successfully inserted into team_market_history")
+        await session.commit()
+        print(f"✅ Inserted {inserted} rows, skipped {skipped} (missing values)")
 
 if __name__ == "__main__":
     asyncio.run(load_csv_to_db())
