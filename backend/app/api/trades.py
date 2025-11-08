@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -31,6 +32,7 @@ class PositionOut(BaseModel):
     team_name: str
     quantity: int
     avg_price: str
+    last_transaction: str
 
 class PortfolioOut(BaseModel):
     balance: str
@@ -165,18 +167,20 @@ async def get_portfolio(
 
     # Aggregate live positions
     positions = {}
+    positions = {}
     for t in trades:
         if t.team_name not in positions:
-            positions[t.team_name] = {"qty": 0, "cost": 0.0}
+            positions[t.team_name] = {"qty": 0, "cost": 0.0, "last_txn": t.timestamp}
+
+        # Update last transaction date
+        if t.timestamp > positions[t.team_name]["last_txn"]:
+            positions[t.team_name]["last_txn"] = t.timestamp
 
         if t.action == "buy":
             positions[t.team_name]["qty"] += t.quantity
             positions[t.team_name]["cost"] += t.price * t.quantity
         else:  # sell
-            # Reduce shares sold
             positions[t.team_name]["qty"] -= t.quantity
-            # Optional: adjust cost proportionally
-            # (simplified FIFO approximation)
             if positions[t.team_name]["qty"] > 0:
                 avg_price_before = positions[t.team_name]["cost"] / (
                     positions[t.team_name]["qty"] + t.quantity
@@ -184,6 +188,7 @@ async def get_portfolio(
                 positions[t.team_name]["cost"] -= avg_price_before * t.quantity
             else:
                 positions[t.team_name]["cost"] = 0
+
 
     portfolio = []
     for team, data in positions.items():
@@ -193,8 +198,10 @@ async def get_portfolio(
                 PositionOut(
                     team_name=team,
                     quantity=data["qty"],
-                    avg_price=f"{avg_price:.2f}"
+                    avg_price=f"{avg_price:.2f}",
+                    last_transaction=data["last_txn"].strftime("%Y-%m-%d %H:%M:%S")
                 )
             )
+
 
     return PortfolioOut(balance=f"{user.balance:.2f}", positions=portfolio)

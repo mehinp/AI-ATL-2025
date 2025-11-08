@@ -17,7 +17,7 @@ class SignupIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
     confirm_password: str
-    initial_deposit: float = Field(ge=0)
+    balance: float = Field(ge=0)
 
 class LoginIn(BaseModel):
     email: EmailStr
@@ -61,11 +61,11 @@ async def get_db():
 # ----------------------------
 # Auth helpers
 # ----------------------------
-async def create_user(email: str, password_hash: str, initial_deposit: float, db: AsyncSession):
+async def create_user(email: str, password_hash: str, balance: float, db: AsyncSession):
     result = await db.execute(select(User).where(User.email == email))
     if result.scalar_one_or_none():
         raise HTTPException(400, detail="Email already registered")
-    user = User(email=email, password=password_hash, balance=initial_deposit)
+    user = User(email=email, password=password_hash, balance=balance, initial_deposit=balance)
     db.add(user)
     await db.commit()
     await db.refresh(user)
@@ -104,7 +104,7 @@ async def signup(payload: SignupIn, db: AsyncSession = Depends(get_db)):
     if payload.password != payload.confirm_password:
         raise HTTPException(400, detail="Passwords do not match")
     hashed = bcrypt.hashpw(payload.password.encode(), bcrypt.gensalt()).decode()
-    user = await create_user(payload.email, hashed, payload.initial_deposit, db)
+    user = await create_user(payload.email, hashed, payload.balance, db)
     token = make_token(user.id)
     return TokenOut(access_token=token, user_id=user.id)
 
