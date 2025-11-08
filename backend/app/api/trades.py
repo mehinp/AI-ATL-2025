@@ -31,12 +31,20 @@ class TradeOut(BaseModel):
 class PositionOut(BaseModel):
     team_name: str
     quantity: int
-    avg_price: str
+    avg_buy_price: str
     last_transaction: str
 
 class PortfolioOut(BaseModel):
     balance: str
     positions: list[PositionOut]
+
+class BalancePoint(BaseModel):
+    timestamp: str
+    balance: str
+
+class BalanceHistoryOut(BaseModel):
+    user_id: int
+    history: list[BalancePoint]
 
 # ---------------------------
 # Database dependency
@@ -70,7 +78,7 @@ async def buy_stock(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Re-query the user in the current DB session
+    # Load user in this session
     result = await db.execute(select(User).where(User.id == current_user.id))
     user = result.scalar_one()
 
@@ -81,16 +89,21 @@ async def buy_stock(
     if balance < cost:
         raise HTTPException(400, detail=f"Insufficient balance (${balance:.2f} < ${cost:.2f})")
 
+    # Deduct and record post-trade balance
     user.balance = float(balance - cost)
+    balance_after = user.balance
 
-    # Record the trade
+    # Record trade
     trade = Trades(
         user_id=user.id,
         team_name=payload.team_name,
         action="buy",
         quantity=payload.quantity,
         price=float(price),
+        balance_after_trade=balance_after, 
+        timestamp=datetime.utcnow()
     )
+
     db.add(trade)
     await db.commit()
 
@@ -98,7 +111,7 @@ async def buy_stock(
         team_name=payload.team_name,
         quantity=payload.quantity,
         price=f"{price:.2f}",
-        balance=f"{user.balance:.2f}"
+        balance=f"{balance_after:.2f}"
     )
 
 
@@ -111,35 +124,36 @@ async def sell_stock(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Re-query user
     result = await db.execute(select(User).where(User.id == current_user.id))
     user = result.scalar_one()
 
     price = await get_current_price(db, payload.team_name)
     proceeds = price * payload.quantity
 
-    # Get all trades for this team
+    # Find all trades for this team
     result = await db.execute(
         select(Trades).where(Trades.user_id == user.id, Trades.team_name == payload.team_name)
     )
     trades = result.scalars().all()
 
     owned_qty = sum(t.quantity if t.action == "buy" else -t.quantity for t in trades)
-
     if owned_qty < payload.quantity:
         raise HTTPException(400, detail=f"Not enough shares to sell. You have {owned_qty}")
 
-    # Update user balance
+    # Update and record post-trade balance
     user.balance = float(Decimal(str(user.balance)) + proceeds)
+    balance_after = user.balance
 
-    # Record sell trade
     trade = Trades(
         user_id=user.id,
         team_name=payload.team_name,
         action="sell",
         quantity=payload.quantity,
         price=float(price),
+        balance_after_trade=balance_after, 
+        timestamp=datetime.utcnow()
     )
+
     db.add(trade)
     await db.commit()
 
@@ -147,7 +161,7 @@ async def sell_stock(
         team_name=payload.team_name,
         quantity=payload.quantity,
         price=f"{price:.2f}",
-        balance=f"{user.balance:.2f}"
+        balance=f"{balance_after:.2f}"
     )
 
 
@@ -165,21 +179,16 @@ async def get_portfolio(
     result = await db.execute(select(Trades).where(Trades.user_id == user.id))
     trades = result.scalars().all()
 
-    # Aggregate live positions
-    positions = {}
     positions = {}
     for t in trades:
         if t.team_name not in positions:
             positions[t.team_name] = {"qty": 0, "cost": 0.0, "last_txn": t.timestamp}
-
-        # Update last transaction date
         if t.timestamp > positions[t.team_name]["last_txn"]:
             positions[t.team_name]["last_txn"] = t.timestamp
-
         if t.action == "buy":
             positions[t.team_name]["qty"] += t.quantity
             positions[t.team_name]["cost"] += t.price * t.quantity
-        else:  # sell
+        else:
             positions[t.team_name]["qty"] -= t.quantity
             if positions[t.team_name]["qty"] > 0:
                 avg_price_before = positions[t.team_name]["cost"] / (
@@ -189,19 +198,50 @@ async def get_portfolio(
             else:
                 positions[t.team_name]["cost"] = 0
 
-
     portfolio = []
     for team, data in positions.items():
         if data["qty"] > 0:
-            avg_price = data["cost"] / data["qty"]
+            avg_buy_price = data["cost"] / data["qty"]
             portfolio.append(
                 PositionOut(
                     team_name=team,
                     quantity=data["qty"],
-                    avg_price=f"{avg_price:.2f}",
+                    avg_buy_price=f"{avg_buy_price:.2f}",
                     last_transaction=data["last_txn"].strftime("%Y-%m-%d %H:%M:%S")
                 )
             )
 
-
     return PortfolioOut(balance=f"{user.balance:.2f}", positions=portfolio)
+
+
+# ---------------------------
+# NEW: GET /trades/balances/history
+# ---------------------------
+@router.get("/balances/history", response_model=BalanceHistoryOut)
+async def get_balance_history(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Return all recorded balances (after each trade) for easy graphing."""
+    result = await db.execute(
+        select(Trades)
+        .where(Trades.user_id == current_user.id)
+        .order_by(Trades.timestamp.asc())
+    )
+    trades = result.scalars().all()
+
+    history = [
+        BalancePoint(
+            timestamp=t.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            balance=f"{t.balance_after_trade:.2f}"
+        )
+        for t in trades
+    ]
+
+    return BalanceHistoryOut(
+        user_id=current_user.id,
+        history=history
+    )
+
+
+
