@@ -6,7 +6,7 @@ from app.models import TeamMarketInformation
 
 async def load_csv_to_db():
     # Read CSV file
-    df = pd.read_csv("team_values.csv")  # adjust path if needed
+    df = pd.read_csv("team_values_formatted_no_price_volume.csv")  # adjust path if needed
     print(f"Loaded {len(df)} rows from CSV")
 
     # Expect columns: team_name, price, value, volume, timestamp (timestamp optional)
@@ -14,9 +14,7 @@ async def load_csv_to_db():
         for _, row in df.iterrows():
             record = TeamMarketInformation(
                 team_name=row["team_name"],
-                price=float(row["price"]),
                 value=float(row["value"]) if "value" in row and not pd.isna(row["value"]) else None,
-                volume=float(row["volume"]),
                 timestamp=pd.to_datetime(row["timestamp"]) if "timestamp" in row else datetime.utcnow(),
             )
             session.add(record)

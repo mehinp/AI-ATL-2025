@@ -23,9 +23,7 @@ async def get_team_value(team_name: str, db: AsyncSession = Depends(get_db)):
     return [
         {
             "team_name": t.team_name,
-            "price": t.price,
             "value": t.value,
-            "volume": t.volume,
             "timestamp": t.timestamp,
         }
         for t in teams
@@ -39,9 +37,7 @@ async def get_all_teams(db: AsyncSession = Depends(get_db)):
     return [
         {
             "team_name": t.team_name,
-            "price": t.price,
             "value": t.value,
-            "volume": t.volume,
             "timestamp": t.timestamp,
         }
         for t in teams

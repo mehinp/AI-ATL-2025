@@ -7,9 +7,7 @@ class TeamMarketInformation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     team_name = Column(String(50), index=True, nullable=False)
-    price = Column(Float, nullable=False)
     value = Column(Float, nullable=True)
-    volume = Column(Float, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
 class User(Base):
