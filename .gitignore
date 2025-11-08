@@ -1,12 +1,34 @@
+# --- environments & caches ---
 venv/
 .venv/
 **/__pycache__/
 *.pyc
+
+# --- secrets / local config ---
 .env
+config/api_keys.py
+config/keys.json
+
+# --- data & large artifacts (ignored by default) ---
 data/
+
+# ignore big binary types globally (we'll re-allow under models/)
 *.pkl
 *.pt
 *.bin
 *.onnx
 *.csv
 *.parquet
+
+# --- editor junk (optional) ---
+.idea/
+.DS_Store
+
+# --- ALLOW models under models/ (must come AFTER the ignores above) ---
+!models/**
+!models/**/*.pkl
+!models/**/*.pt
+!models/**/*.bin
+!models/**/*.onnx
+!models/.gitattributes
+
