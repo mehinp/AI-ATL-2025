@@ -1,11 +1,11 @@
 from decimal import Decimal
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, case
 from app.database import SessionLocal
 from app.models import User, Trades, TeamMarketInformation
+from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/trades", tags=["Trades"])
 
@@ -24,7 +24,7 @@ class TradeOut(BaseModel):
     success: bool = True
     team_name: str
     quantity: int
-    avg_price: str
+    price: str
     balance: str
 
 class PositionOut(BaseModel):
@@ -44,30 +44,6 @@ async def get_db():
         yield session
 
 # ---------------------------
-# Simple auth dependency (no JWT)
-# ---------------------------
-async def get_current_user(
-    x_auth_header: str = Header(..., alias="X-Auth-Header"),
-    db: AsyncSession = Depends(get_db)
-) -> User:
-    """
-    Extract user based on the 'X-Auth-Header' value (email or user ID).
-    """
-    if not x_auth_header:
-        raise HTTPException(status_code=401, detail="Missing X-Auth-Header")
-
-    # Accept numeric user ID or email
-    if x_auth_header.isdigit():
-        result = await db.execute(select(User).where(User.id == int(x_auth_header)))
-    else:
-        result = await db.execute(select(User).where(User.email == x_auth_header))
-
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-
-# ---------------------------
 # Helpers
 # ---------------------------
 async def get_current_price(db: AsyncSession, team_name: str) -> Decimal:
@@ -82,93 +58,143 @@ async def get_current_price(db: AsyncSession, team_name: str) -> Decimal:
         raise HTTPException(status_code=404, detail=f"No price data for '{team_name}'")
     return Decimal(str(team_info.value))
 
+
 # ---------------------------
 # POST /trades/buy
 # ---------------------------
 @router.post("/buy", response_model=TradeOut)
-async def buy_stock(payload: BuyIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def buy_stock(
+    payload: BuyIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Re-query the user in the current DB session
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one()
+
     price = await get_current_price(db, payload.team_name)
-    cost = price * payload.quantity
-    balance = Decimal(str(current_user.balance))
+    cost = Decimal(str(price)) * payload.quantity
+    balance = Decimal(str(user.balance))
 
     if balance < cost:
         raise HTTPException(400, detail=f"Insufficient balance (${balance:.2f} < ${cost:.2f})")
 
-    current_user.balance = float(balance - cost)
-    trade = Trades(user_id=current_user.id, team_name=payload.team_name, action="buy", quantity=payload.quantity, price=float(price))
+    user.balance = float(balance - cost)
+
+    # Record the trade
+    trade = Trades(
+        user_id=user.id,
+        team_name=payload.team_name,
+        action="buy",
+        quantity=payload.quantity,
+        price=float(price),
+    )
     db.add(trade)
     await db.commit()
-    await db.refresh(current_user)
 
-    result = await db.execute(
-        select(
-            func.sum(case((Trades.action == 'buy', Trades.quantity), else_=-Trades.quantity)).label('net_qty'),
-            func.sum(case((Trades.action == 'buy', Trades.price * Trades.quantity), else_=0)).label('buy_value'),
-            func.sum(case((Trades.action == 'buy', Trades.quantity), else_=0)).label('buy_qty')
-        ).where(Trades.user_id == current_user.id, Trades.team_name == payload.team_name)
+    return TradeOut(
+        team_name=payload.team_name,
+        quantity=payload.quantity,
+        price=f"{price:.2f}",
+        balance=f"{user.balance:.2f}"
     )
-    row = result.one()
-    net_qty = row.net_qty or 0
-    avg_price = (row.buy_value / row.buy_qty) if row.buy_qty else 0
 
-    return TradeOut(team_name=payload.team_name, quantity=int(net_qty), avg_price=f"{avg_price:.2f}", balance=f"{current_user.balance:.2f}")
 
 # ---------------------------
 # POST /trades/sell
 # ---------------------------
 @router.post("/sell", response_model=TradeOut)
-async def sell_stock(payload: SellIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def sell_stock(
+    payload: SellIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Re-query user
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one()
+
     price = await get_current_price(db, payload.team_name)
     proceeds = price * payload.quantity
 
+    # Get all trades for this team
     result = await db.execute(
-        select(func.sum(case((Trades.action == 'buy', Trades.quantity), else_=-Trades.quantity)))
-        .where(Trades.user_id == current_user.id, Trades.team_name == payload.team_name)
+        select(Trades).where(Trades.user_id == user.id, Trades.team_name == payload.team_name)
     )
-    current_qty = result.scalar() or 0
-    if current_qty < payload.quantity:
-        raise HTTPException(400, detail=f"Not enough shares to sell. You have {current_qty}")
+    trades = result.scalars().all()
 
-    current_user.balance = float(Decimal(str(current_user.balance)) + proceeds)
-    trade = Trades(user_id=current_user.id, team_name=payload.team_name, action="sell", quantity=payload.quantity, price=float(price))
+    owned_qty = sum(t.quantity if t.action == "buy" else -t.quantity for t in trades)
+
+    if owned_qty < payload.quantity:
+        raise HTTPException(400, detail=f"Not enough shares to sell. You have {owned_qty}")
+
+    # Update user balance
+    user.balance = float(Decimal(str(user.balance)) + proceeds)
+
+    # Record sell trade
+    trade = Trades(
+        user_id=user.id,
+        team_name=payload.team_name,
+        action="sell",
+        quantity=payload.quantity,
+        price=float(price),
+    )
     db.add(trade)
     await db.commit()
-    await db.refresh(current_user)
 
-    result = await db.execute(
-        select(
-            func.sum(case((Trades.action == 'buy', Trades.quantity), else_=-Trades.quantity)).label('net_qty'),
-            func.sum(case((Trades.action == 'buy', Trades.price * Trades.quantity), else_=0)).label('buy_value'),
-            func.sum(case((Trades.action == 'buy', Trades.quantity), else_=0)).label('buy_qty')
-        ).where(Trades.user_id == current_user.id, Trades.team_name == payload.team_name)
+    return TradeOut(
+        team_name=payload.team_name,
+        quantity=payload.quantity,
+        price=f"{price:.2f}",
+        balance=f"{user.balance:.2f}"
     )
-    row = result.one()
-    net_qty = row.net_qty or 0
-    avg_price = (row.buy_value / row.buy_qty) if row.buy_qty else 0
 
-    return TradeOut(team_name=payload.team_name, quantity=int(net_qty), avg_price=f"{avg_price:.2f}", balance=f"{current_user.balance:.2f}")
 
 # ---------------------------
 # GET /trades/portfolio
 # ---------------------------
 @router.get("/portfolio", response_model=PortfolioOut)
-async def get_portfolio(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(
-            Trades.team_name,
-            func.sum(case((Trades.action == 'buy', Trades.quantity), else_=-Trades.quantity)).label('net_qty'),
-            func.sum(case((Trades.action == 'buy', Trades.price * Trades.quantity), else_=0)).label('buy_value'),
-            func.sum(case((Trades.action == 'buy', Trades.quantity), else_=0)).label('buy_qty')
-        )
-        .where(Trades.user_id == current_user.id)
-        .group_by(Trades.team_name)
-    )
-    rows = result.all()
+async def get_portfolio(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result_user = await db.execute(select(User).where(User.id == current_user.id))
+    user = result_user.scalar_one()
 
-    positions = []
-    for row in rows:
-        if (row.net_qty or 0) > 0:
-            avg_price = (row.buy_value / row.buy_qty) if row.buy_qty else 0
-            positions.append(PositionOut(team_name=row.team_name, quantity=int(row.net_qty), avg_price=f"{avg_price:.2f}"))
+    result = await db.execute(select(Trades).where(Trades.user_id == user.id))
+    trades = result.scalars().all()
 
-    return PortfolioOut(balance=f"{current_user.balance:.2f}", positions=positions)
+    # Aggregate live positions
+    positions = {}
+    for t in trades:
+        if t.team_name not in positions:
+            positions[t.team_name] = {"qty": 0, "cost": 0.0}
+
+        if t.action == "buy":
+            positions[t.team_name]["qty"] += t.quantity
+            positions[t.team_name]["cost"] += t.price * t.quantity
+        else:  # sell
+            # Reduce shares sold
+            positions[t.team_name]["qty"] -= t.quantity
+            # Optional: adjust cost proportionally
+            # (simplified FIFO approximation)
+            if positions[t.team_name]["qty"] > 0:
+                avg_price_before = positions[t.team_name]["cost"] / (
+                    positions[t.team_name]["qty"] + t.quantity
+                )
+                positions[t.team_name]["cost"] -= avg_price_before * t.quantity
+            else:
+                positions[t.team_name]["cost"] = 0
+
+    portfolio = []
+    for team, data in positions.items():
+        if data["qty"] > 0:
+            avg_price = data["cost"] / data["qty"]
+            portfolio.append(
+                PositionOut(
+                    team_name=team,
+                    quantity=data["qty"],
+                    avg_price=f"{avg_price:.2f}"
+                )
+            )
+
+    return PortfolioOut(balance=f"{user.balance:.2f}", positions=portfolio)
