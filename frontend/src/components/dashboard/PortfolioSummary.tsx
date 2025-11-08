@@ -4,6 +4,7 @@ import PriceDisplay from "../shared/PriceDisplay";
 import PercentageChange from "../shared/PercentageChange";
 import StatCard from "../shared/StatCard";
 import { formatCurrency, formatNumber } from "@/lib/number-format";
+import { usePriceFlash } from "@/hooks/usePriceFlash";
 
 interface PortfolioSummaryProps {
   totalValue: number;
@@ -23,6 +24,8 @@ export default function PortfolioSummary({
   const signedDayChange = `${dayChange >= 0 ? "+" : "-"}${formatCurrency(
     Math.abs(dayChange),
   )}`;
+  const dayFlash = usePriceFlash(dayChange);
+  const percentFlash = usePriceFlash(dayChangePercent);
 
   return (
     <Card className="p-6" data-testid="portfolio-summary">
@@ -31,12 +34,14 @@ export default function PortfolioSummary({
           <h2 className="text-lg font-semibold mb-4">Portfolio Summary</h2>
           <div className="flex items-end gap-3">
             <PriceDisplay price={totalValue} size="lg" />
-            <PercentageChange value={dayChangePercent} size="md" />
+            <span className={percentFlash}>
+              <PercentageChange value={dayChangePercent} size="md" />
+            </span>
           </div>
           <div
             className={`text-sm font-medium mt-2 ${
               dayChange >= 0 ? "text-success" : "text-danger"
-            }`}
+            } ${dayFlash}`}
           >
             {signedDayChange} today
           </div>
@@ -47,6 +52,7 @@ export default function PortfolioSummary({
             icon={Wallet}
             label="Cash Balance"
             value={formatCurrency(cashBalance)}
+            flashValue={cashBalance}
           />
           <StatCard
             icon={Briefcase}
@@ -58,6 +64,7 @@ export default function PortfolioSummary({
             icon={TrendingUp}
             label="Day P&L"
             value={signedDayChange}
+            flashValue={dayChange}
           />
         </div>
       </div>

@@ -13,8 +13,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-
-export type ChartRange = "1W" | "1M" | "ALL";
+import { usePriceFlash } from "@/hooks/usePriceFlash";
+import {
+  ChartRange,
+  CHART_RANGE_SEQUENCE,
+  getRangeLabel,
+} from "@/lib/chart-range";
 
 interface DataPoint {
   time: string;
@@ -33,9 +37,43 @@ interface StockChartProps {
   priceDomain?: [number, number];
 }
 
-const RANGES: ChartRange[] = ["1W", "1M", "ALL"];
 const CHART_MARGINS = { top: 20, right: 24, bottom: 24, left: 12 };
 const DEFAULT_PRICE_DOMAIN: [number, number] = [0, 250];
+const SHORT_TIME: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
+const FULL_DATE: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+
+const formatTickLabel = (range: ChartRange, timestamp?: number | null) => {
+  if (!Number.isFinite(timestamp ?? NaN)) return "";
+  const date = new Date(timestamp!);
+  switch (range) {
+    case "1MIN":
+      return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    case "5MIN":
+    case "1H":
+    case "1D":
+      return date.toLocaleTimeString(undefined, SHORT_TIME);
+    case "1W":
+      return date.toLocaleDateString(undefined, { weekday: "short", hour: "2-digit" });
+    case "ALL":
+    default:
+      return date.toLocaleDateString(undefined, FULL_DATE);
+  }
+};
+
+const formatDisplayTimestamp = (range: ChartRange, timestamp?: number | null, fallback?: string) => {
+  if (!Number.isFinite(timestamp ?? NaN)) return fallback ?? "—";
+  const date = new Date(timestamp!);
+  if (range === "1MIN") {
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  if (range === "5MIN" || range === "1H" || range === "1D") {
+    return date.toLocaleTimeString(undefined, SHORT_TIME);
+  }
+  if (range === "1W") {
+    return date.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+};
 
 const formatPrice = (v: number) =>
   new Intl.NumberFormat("en-US", {
@@ -64,13 +102,19 @@ export default function StockChart({
     () => `grad-${Math.random().toString(36).slice(2)}`,
     []
   );
-
   const [active, setActive] = useState<DataPoint | null>(null);
   const [isDragging, setDragging] = useState(false);
   const [dragStart, setDragStart] = useState<DataPoint | null>(null);
   const [dragEnd, setDragEnd] = useState<DataPoint | null>(null);
   const [hasDragged, setHasDragged] = useState(false);
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+
+  const latest = data.at(-1);
+  const display = active ?? latest;
+  const priceFlash = usePriceFlash(price);
+  const timeFlash = usePriceFlash(display?.timestamp ?? 0);
+  const weekFlash = usePriceFlash(weekChangePercent ?? 0);
+  const monthFlash = usePriceFlash(monthChangePercent ?? 0);
 
   const chartRef = useRef<HTMLDivElement | null>(null);
 
@@ -96,16 +140,35 @@ export default function StockChart({
     };
   }, [isDragging]);
 
-  const domain = priceDomain ?? DEFAULT_PRICE_DOMAIN;
-  const latest = data.at(-1);
-  const display = active ?? latest;
+  const domain = useMemo(() => {
+    if (priceDomain) return priceDomain;
+    if (!data.length) return DEFAULT_PRICE_DOMAIN;
+    const prices = data.map((point) => point.price).filter((price) => Number.isFinite(price));
+    if (!prices.length) return DEFAULT_PRICE_DOMAIN;
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return DEFAULT_PRICE_DOMAIN;
+    const padding = Math.max((max - min || max || 1) * 0.1, 1);
+    const lower = Math.max(0, min - padding);
+    const upper = max + padding;
+    if (lower === upper) {
+      return [Math.max(0, lower - 1), upper + 1];
+    }
+    return [lower, upper] as [number, number];
+  }, [priceDomain, data]);
   const displayPrice = display?.price ?? price;
-  const displayTime = display?.time ?? "—";
+  const formatPointLabel = (point?: DataPoint | null) =>
+    point ? formatDisplayTimestamp(range, point.timestamp ?? null, point.time) : "—";
+  const displayTime = formatPointLabel(display);
 
   const selection = useMemo(() => {
     if (!dragStart || !dragEnd || !hasDragged) return null;
-    const i1 = data.findIndex((d) => d.time === dragStart.time);
-    const i2 = data.findIndex((d) => d.time === dragEnd.time);
+    const i1 = data.findIndex(
+      (d) => d.timestamp === dragStart.timestamp && d.price === dragStart.price,
+    );
+    const i2 = data.findIndex(
+      (d) => d.timestamp === dragEnd.timestamp && d.price === dragEnd.price,
+    );
     if (i1 === -1 || i2 === -1 || i1 === i2) return null;
     const [minI, maxI] = i1 < i2 ? [i1, i2] : [i2, i1];
     return { start: data[minI], end: data[maxI] };
@@ -123,7 +186,7 @@ export default function StockChart({
     if (!pt) return;
     setActive(pt);
     if (isDragging && dragStart) {
-      if (pt.time !== dragStart.time) setHasDragged(true);
+      if (pt.timestamp !== dragStart.timestamp) setHasDragged(true);
       setDragEnd(pt);
     }
   };
@@ -151,11 +214,11 @@ export default function StockChart({
           <div>
             <p className="text-sm text-muted-foreground">{teamName}</p>
             <div className="flex items-baseline gap-3">
-              <span className="text-4xl font-semibold tracking-tight">
+              <span className={`text-4xl font-semibold tracking-tight ${priceFlash}`}>
                 {formatPrice(displayPrice)}
               </span>
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className={`text-xs text-muted-foreground ${timeFlash}`}>
               Updated {displayTime}
             </div>
           </div>
@@ -170,7 +233,7 @@ export default function StockChart({
                   (weekChangePercent ?? 0) >= 0
                     ? "text-success"
                     : "text-destructive"
-                }`}
+                } ${weekFlash}`}
               >
                 {formatPercent(weekChangePercent)}
               </p>
@@ -184,7 +247,7 @@ export default function StockChart({
                   (monthChangePercent ?? 0) >= 0
                     ? "text-success"
                     : "text-destructive"
-                }`}
+                } ${monthFlash}`}
               >
                 {formatPercent(monthChangePercent)}
               </p>
@@ -194,14 +257,14 @@ export default function StockChart({
 
         {/* Range buttons */}
         <div className="flex gap-2">
-          {RANGES.map((tf) => (
+          {CHART_RANGE_SEQUENCE.map((tf) => (
             <Button
               key={tf}
               variant={range === tf ? "default" : "ghost"}
               size="sm"
               onClick={() => onRangeChange(tf)}
             >
-              {tf}
+              {getRangeLabel(tf)}
             </Button>
           ))}
         </div>
@@ -237,11 +300,15 @@ export default function StockChart({
                 strokeDasharray="3 3"
               />
               <XAxis
-                dataKey="time"
+                dataKey="timestamp"
+                type="number"
+                domain={["dataMin", "dataMax"]}
                 stroke="hsl(var(--muted-foreground))"
                 fontSize={12}
                 tickLine={false}
                 axisLine={false}
+                tickFormatter={(value) => formatTickLabel(range, value)}
+                minTickGap={16}
               />
               <YAxis
                 stroke="hsl(var(--muted-foreground))"
@@ -279,15 +346,15 @@ export default function StockChart({
 
                     const scaleX = xAxis.scale;
                     const scaleY = yAxis?.scale;
-                    const getX = (t: string) => scaleX(t);
+                    const getX = (ts?: number | null) => scaleX(ts ?? 0);
                     const getY = (p: number) => (scaleY ? scaleY(p) : 0);
 
                     const elems: ReactNode[] = [];
 
                     // Selection shading
                     if (selection && hasDragged) {
-                      const x1 = getX(selection.start.time);
-                      const x2 = getX(selection.end.time);
+                      const x1 = getX(selection.start.timestamp);
+                      const x2 = getX(selection.end.timestamp);
                       const w = Math.abs(x2 - x1);
                       if (w > 3) {
                         elems.push(
@@ -308,8 +375,8 @@ export default function StockChart({
                     }
 
                     // Crosshair
-                    if (active?.time && !isDragging) {
-                      const x = getX(active.time);
+                    if (active?.timestamp != null && !isDragging) {
+                      const x = getX(active.timestamp);
                       const y = getY(active.price);
                       elems.push(
                         <line
@@ -356,7 +423,7 @@ export default function StockChart({
                 ({formatPercent(selectionDiff.pct)})
               </span>
               <span className="text-xs text-muted-foreground">
-                {selection.start.time} → {selection.end.time}
+                {formatPointLabel(selection.start)} → {formatPointLabel(selection.end)}
               </span>
               <button
                 type="button"

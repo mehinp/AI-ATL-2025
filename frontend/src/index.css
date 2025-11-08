@@ -204,6 +204,50 @@
  * need to be distinguished from eachother visually.
  */
 @layer utilities {
+  @keyframes flash-rise {
+    0% {
+      color: hsl(var(--success));
+      text-shadow: 0 0 8px hsl(var(--success) / 0.45);
+    }
+    100% {
+      color: inherit;
+      text-shadow: none;
+    }
+  }
+
+  @keyframes flash-fall {
+    0% {
+      color: hsl(var(--destructive));
+      text-shadow: 0 0 8px hsl(var(--destructive) / 0.45);
+    }
+    100% {
+      color: inherit;
+      text-shadow: none;
+    }
+  }
+
+  .flash-up {
+    animation: flash-rise 0.8s ease;
+  }
+
+  .flash-down {
+    animation: flash-fall 0.8s ease;
+  }
+
+  @keyframes flash-updated-time {
+    0% {
+      color: #fbbf24;
+      text-shadow: 0 0 6px rgba(251, 191, 36, 0.6);
+    }
+    100% {
+      color: inherit;
+      text-shadow: none;
+    }
+  }
+
+  .flash-time {
+    animation: flash-updated-time 0.9s ease;
+  }
 
   /* Hide ugly search cancel button in Chrome until we can style it properly */
   input[type="search"]::-webkit-search-cancel-button {

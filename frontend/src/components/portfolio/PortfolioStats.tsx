@@ -1,11 +1,13 @@
 import { Card } from "@/components/ui/card";
 import { TrendingUp, DollarSign, BarChart3, Target } from "lucide-react";
 import { formatCurrency } from "@/lib/number-format";
+import { usePriceFlash } from "@/hooks/usePriceFlash";
 
 interface PortfolioStatsProps {
   totalValue: number;
   totalCost: number;
   cashBalance: number;
+  totalPnL: number;
   initialDeposit: number;
   dayChange: number;
   dayChangePercent: number;
@@ -15,6 +17,7 @@ export default function PortfolioStats({
   totalValue,
   totalCost,
   cashBalance,
+  totalPnL,
   initialDeposit,
   dayChange,
   dayChangePercent,
@@ -22,9 +25,9 @@ export default function PortfolioStats({
   const safeTotalCost = totalCost > 0 ? totalCost : 0;
   const safeCashBalance = cashBalance > 0 ? cashBalance : 0;
   const safeInitialDeposit = initialDeposit > 0 ? initialDeposit : 0;
-  const totalProfitLoss = totalValue - safeInitialDeposit;
+  const totalProfitLoss = totalPnL;
   const totalProfitLossPercent =
-    safeInitialDeposit > 0 ? (totalProfitLoss / safeInitialDeposit) * 100 : 0;
+    totalValue > 0 ? (totalProfitLoss / totalValue) * 100 : 0;
   const normalizedDayChangePercent = Number.isFinite(dayChangePercent)
     ? dayChangePercent
     : 0;
@@ -33,6 +36,7 @@ export default function PortfolioStats({
     icon: typeof DollarSign;
     label: string;
     value: string;
+    valueRaw: number;
     subtitle: string;
     percentIntent?: "positive" | "negative";
   };
@@ -42,18 +46,21 @@ export default function PortfolioStats({
       icon: DollarSign,
       label: "Cash Balance",
       value: formatCurrency(safeCashBalance),
+      valueRaw: safeCashBalance,
       subtitle: "Available to trade",
     },
     {
       icon: BarChart3,
       label: "Total Cost",
       value: formatCurrency(safeTotalCost),
+      valueRaw: safeTotalCost,
       subtitle: "Capital deployed",
     },
     {
       icon: TrendingUp,
       label: "Total P&L",
       value: `${totalProfitLoss >= 0 ? "+" : "-"}${formatCurrency(Math.abs(totalProfitLoss))}`,
+      valueRaw: totalProfitLoss,
       subtitle: `${totalProfitLossPercent >= 0 ? "+" : "-"}${Math.abs(totalProfitLossPercent).toFixed(2)}%`,
       percentIntent: totalProfitLoss >= 0 ? "positive" : "negative",
     },
@@ -61,49 +68,47 @@ export default function PortfolioStats({
       icon: Target,
       label: "Day Change",
       value: `${dayChange >= 0 ? "+" : "-"}${formatCurrency(Math.abs(dayChange))}`,
+      valueRaw: dayChange,
       subtitle: `${normalizedDayChangePercent >= 0 ? "+" : "-"}${Math.abs(normalizedDayChangePercent).toFixed(2)}%`,
       percentIntent: dayChange >= 0 ? "positive" : "negative",
     },
   ] as const;
+
+  const StatMetric = ({ card }: { card: CardConfig }) => {
+    const flashClass = usePriceFlash(card.valueRaw);
+    const Icon = card.icon;
+    const percentClass =
+      card.percentIntent === "positive"
+        ? "text-success"
+        : card.percentIntent === "negative"
+          ? "text-destructive"
+          : "text-muted-foreground";
+
+    return (
+      <div className="rounded-2xl border bg-card/80 p-5 shadow-sm transition hover:shadow-md">
+        <div className="flex items-center justify-between text-muted-foreground gap-2">
+          <span className="text-sm font-medium">{card.label}</span>
+          <Icon className="h-4 w-4" />
+        </div>
+
+        <div className={`mt-2 text-2l font-mono font-semibold tracking-tight ${flashClass}`}>
+          {card.value}
+        </div>
+        <span className={`text-xs font-medium ${card.percentIntent ? percentClass : "text-muted-foreground"}`}>
+          {card.subtitle}
+        </span>
+      </div>
+    );
+  };
 
   return (
     <Card className="p-6" data-testid="portfolio-stats">
       <h2 className="text-lg font-semibold mb-4">Performance Stats</h2>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {cards.map((card) => {
-          const Icon = card.icon;
-          const isChangeCard = Boolean(card.percentIntent);
-          const percentClass =
-            card.percentIntent === "positive"
-              ? "text-success"
-              : card.percentIntent === "negative"
-                ? "text-destructive"
-                : "text-muted-foreground";
-
-          return (
-            <div
-              key={card.label}
-              className="rounded-2xl border bg-card/80 p-5 shadow-sm transition hover:shadow-md"
-            >
-              <div className="flex items-center justify-between text-muted-foreground gap-2">
-                <span className="text-sm font-medium">{card.label}</span>
-                <Icon className="h-4 w-4" />
-              </div>
-
-              <div className="mt-2 text-2l font-mono font-semibold tracking-tight">
-                {card.value}
-              </div>
-              <span
-                className={`text-xs font-medium ${
-                  isChangeCard ? percentClass : "text-muted-foreground"
-                }`}
-              >
-                {card.subtitle}
-              </span>
-            </div>
-          );
-        })}
+        {cards.map((card) => (
+          <StatMetric key={card.label} card={card} />
+        ))}
       </div>
     </Card>
   );

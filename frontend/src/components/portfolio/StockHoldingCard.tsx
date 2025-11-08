@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import TeamLogo from "../shared/TeamLogo";
 import PercentageChange from "../shared/PercentageChange";
 import { formatCurrency, formatNumber } from "@/lib/number-format";
+import { usePriceFlash } from "@/hooks/usePriceFlash";
 
 interface StockHoldingCardProps {
   team: {
@@ -34,6 +35,9 @@ export default function StockHoldingCard({
   const formattedTotalValue = formatCurrency(totalValue);
   const formattedPnL = `${profitLoss >= 0 ? "+" : "-"}${formatCurrency(Math.abs(profitLoss))}`;
   const canSell = shares > 0 && Boolean(onSell);
+  const priceFlash = usePriceFlash(currentPrice);
+  const totalValueFlash = usePriceFlash(totalValue);
+  const pnlFlash = usePriceFlash(profitLoss);
 
   return (
     <Card
@@ -71,11 +75,11 @@ export default function StockHoldingCard({
           </div>
           <div>
             <div className="text-muted-foreground">Current Price</div>
-            <div className="font-mono font-semibold">{formattedCurrentPrice}</div>
+            <div className={`font-mono font-semibold ${priceFlash}`}>{formattedCurrentPrice}</div>
           </div>
           <div>
             <div className="text-muted-foreground">Total Value</div>
-            <div className="font-mono font-semibold">{formattedTotalValue}</div>
+            <div className={`font-mono font-semibold ${totalValueFlash}`}>{formattedTotalValue}</div>
           </div>
         </div>
 
@@ -83,7 +87,11 @@ export default function StockHoldingCard({
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Profit/Loss</span>
             <div className="flex items-center gap-2">
-              <span className={`font-mono font-semibold ${profitLoss >= 0 ? 'text-success' : 'text-danger'}`}>
+              <span
+                className={`font-mono font-semibold ${
+                  profitLoss >= 0 ? "text-success" : "text-danger"
+                } ${pnlFlash}`}
+              >
                 {formattedPnL}
               </span>
               <PercentageChange value={profitLossPercent} />

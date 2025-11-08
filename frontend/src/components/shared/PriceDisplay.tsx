@@ -1,4 +1,5 @@
 import { formatCurrency } from "@/lib/number-format";
+import { usePriceFlash } from "@/hooks/usePriceFlash";
 
 interface PriceDisplayProps {
   price: number;
@@ -17,8 +18,10 @@ export default function PriceDisplay({
     lg: "text-3xl",
   };
 
+  const flashClass = usePriceFlash(price);
+
   return (
-    <span className={`font-mono font-bold ${sizeClasses[size]} ${className}`}>
+    <span className={`font-mono font-bold ${sizeClasses[size]} ${flashClass} ${className}`}>
       {formatCurrency(price)}
     </span>
   );

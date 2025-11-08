@@ -6,6 +6,9 @@ export function usePortfolio() {
   return useQuery({
     queryKey: ["portfolio"],
     queryFn: fetchPortfolio,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    staleTime: 0,
   });
 }
 

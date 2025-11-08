@@ -12,6 +12,7 @@ import { getTeamAbbreviation } from "@/lib/utils";
 import type { TeamMarketInformation } from "@/lib/api";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { buildPortfolioSnapshot } from "@/lib/portfolio-utils";
+import { usePortfolioValueHistory } from "@/hooks/usePortfolioValueHistory";
 
 const PRICE_MULTIPLIER = 1;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -92,6 +93,7 @@ const normalizeTeams = (teams: TeamMarketInformation[]): NormalizedTeam[] => {
 export default function Dashboard() {
   const { data: teams, isLoading: isTeamsLoading } = useTeams();
   const { data: portfolioData, isLoading: isPortfolioLoading } = usePortfolio();
+  const { data: portfolioHistory } = usePortfolioValueHistory();
   const navigateToMarket = useMarketNavigation();
 
   const normalizedTeams = useMemo(() => (teams ? normalizeTeams(teams) : []), [teams]);
@@ -124,9 +126,10 @@ export default function Dashboard() {
     [normalizedTeams],
   );
 
-  const portfolioSnapshot = useMemo(
-    () => buildPortfolioSnapshot(portfolioData, teams),
-    [portfolioData, teams],
+  const portfolioSnapshot = buildPortfolioSnapshot(
+    portfolioData,
+    teams,
+    portfolioHistory?.history,
   );
 
   const portfolioInsights = useMemo(() => {

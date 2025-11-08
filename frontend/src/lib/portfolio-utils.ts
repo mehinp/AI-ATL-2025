@@ -4,6 +4,7 @@ import type {
   TeamMarketInformation,
   PortfolioTrade,
   PortfolioPosition,
+  PortfolioLiveHistoryPoint,
 } from "@/lib/api";
 
 const PRICE_MULTIPLIER = 1;
@@ -54,7 +55,7 @@ const deriveTradesFromPositions = (positions: PortfolioPosition[] | undefined): 
     team_name: position.team_name,
     action: "buy",
     quantity: position.quantity,
-    price: position.avg_price,
+    price: position.avg_buy_price ?? position.avg_price ?? "0",
     timestamp: position.last_transaction ?? "",
   }));
 
@@ -114,6 +115,7 @@ export type PortfolioSnapshot = {
   cashBalance: number;
   totalValue: number;
   totalCost: number;
+  totalUnrealizedPnL: number;
   initialDeposit: number;
   dayChangeValue: number;
   dayChangePercent: number;
@@ -534,6 +536,7 @@ const buildHoldingsPerformanceHistory = (
 export function buildPortfolioSnapshot(
   portfolio: PortfolioResponse | undefined,
   marketTeams: TeamMarketInformation[] | undefined,
+  history?: PortfolioLiveHistoryPoint[],
 ): PortfolioSnapshot {
   if (!portfolio) {
     return {
@@ -541,6 +544,7 @@ export function buildPortfolioSnapshot(
       cashBalance: 0,
       totalValue: 0,
       totalCost: 0,
+      totalUnrealizedPnL: 0,
       dayChangeValue: 0,
       dayChangePercent: 0,
       holdingsCount: 0,
@@ -550,7 +554,21 @@ export function buildPortfolioSnapshot(
     };
   }
 
-  const cashBalance = toNumber(portfolio.balance);
+  const parsedHistory =
+    history
+      ?.map((point) => {
+        const timestamp = parsePortfolioDate(point.timestamp).getTime();
+        const balance = toNumber(point.balance, NaN);
+        return Number.isFinite(timestamp) && Number.isFinite(balance)
+          ? { timestamp, balance }
+          : null;
+      })
+      .filter((point): point is { timestamp: number; balance: number } => Boolean(point))
+      .sort((a, b) => a.timestamp - b.timestamp) ?? [];
+
+  const latestHistoryPoint = parsedHistory.at(-1);
+
+  const fallbackCashBalance = toNumber(portfolio.balance);
   const metrics = computeTeamMetrics(marketTeams);
   const tradeSource =
     portfolio.trades && portfolio.trades.length > 0
@@ -558,22 +576,26 @@ export function buildPortfolioSnapshot(
       : deriveTradesFromPositions(portfolio.positions);
   const trades = normalizeTrades(tradeSource);
   const reportedInitialDeposit = toNumber(portfolio.initial_deposit, NaN);
-  const inferredInitialDeposit = computeInitialDeposit(cashBalance, trades);
-  const initialDeposit =
-    Number.isFinite(reportedInitialDeposit) && reportedInitialDeposit > 0
-      ? reportedInitialDeposit
-      : inferredInitialDeposit > 0
-        ? inferredInitialDeposit
-        : DEFAULT_INITIAL_DEPOSIT;
 
   const holdings: EnrichedHolding[] = portfolio.positions
     .filter((position) => position.quantity > 0)
     .map((position, index) => {
       const metric = metrics.get(position.team_name);
       const avgCost = toNumber(position.avg_buy_price ?? position.avg_price);
-      const currentPrice = metric?.price ?? avgCost;
-      const totalValue = currentPrice * position.quantity;
-      const totalCost = avgCost * position.quantity;
+      const currentPrice = toNumber(position.current_price, metric?.price ?? avgCost);
+      const totalValue = toNumber(
+        position.position_value,
+        currentPrice * position.quantity,
+      );
+      const totalCost = toNumber(position.cost_basis, avgCost * position.quantity);
+      const unrealized = toNumber(
+        position.unrealized_pnl,
+        totalValue - totalCost,
+      );
+      const dayChangePercent =
+        totalCost > 0
+          ? (unrealized / totalCost) * 100
+          : metric?.dayChangePercent ?? 0;
 
       return {
         id: `${position.team_name}-${index}`,
@@ -584,7 +606,7 @@ export function buildPortfolioSnapshot(
         quantity: position.quantity,
         avgCost,
         currentPrice,
-        dayChangePercent: metric?.dayChangePercent ?? 0,
+        dayChangePercent,
         totalValue,
         totalCost,
       };
@@ -592,7 +614,29 @@ export function buildPortfolioSnapshot(
 
   const holdingsValue = holdings.reduce((sum, holding) => sum + holding.totalValue, 0);
   const totalCost = holdings.reduce((sum, holding) => sum + holding.totalCost, 0);
-  const totalValue = cashBalance + holdingsValue;
+  const totalUnrealizedPnL = toNumber(
+    portfolio.total_unrealized_pnl,
+    holdings.reduce((sum, holding) => sum + (holding.totalValue - holding.totalCost), 0),
+  );
+
+  let totalValue = holdingsValue + fallbackCashBalance;
+  let cashBalance = fallbackCashBalance;
+
+  if (latestHistoryPoint && Number.isFinite(latestHistoryPoint.balance)) {
+    totalValue = latestHistoryPoint.balance;
+    cashBalance = totalValue - holdingsValue;
+  }
+
+  if (!Number.isFinite(cashBalance)) cashBalance = 0;
+  if (cashBalance < 0 && Math.abs(cashBalance) < 0.01) cashBalance = 0;
+
+  const inferredInitialDeposit = computeInitialDeposit(cashBalance, trades);
+  const initialDeposit =
+    Number.isFinite(reportedInitialDeposit) && reportedInitialDeposit > 0
+      ? reportedInitialDeposit
+      : inferredInitialDeposit > 0
+        ? inferredInitialDeposit
+        : DEFAULT_INITIAL_DEPOSIT;
 
   const holdingsHistory = buildHoldingsPerformanceHistory(trades, holdings, marketTeams);
   const chartPoints =
@@ -613,9 +657,30 @@ export function buildPortfolioSnapshot(
       .reverse()
       .find((point) => (point.timestamp ?? 0) <= referenceThreshold) ?? latestPoint;
 
-  const dayChangeValue = latestPoint && referencePoint ? latestPoint.value - referencePoint.value : 0;
-  const dayChangePercent =
-    referencePoint && referencePoint.value > 0 ? (dayChangeValue / referencePoint.value) * 100 : 0;
+  const fallbackDayChangeValue =
+    latestPoint && referencePoint ? latestPoint.value - referencePoint.value : 0;
+  const fallbackDayChangePercent =
+    referencePoint && referencePoint.value > 0 ? (fallbackDayChangeValue / referencePoint.value) * 100 : 0;
+
+  let dayChangeValue = fallbackDayChangeValue;
+  let dayChangePercent = fallbackDayChangePercent;
+
+  if (parsedHistory.length >= 2 && latestHistoryPoint) {
+    const referenceHistoryPoint = [...parsedHistory]
+      .reverse()
+      .find((point) => point.timestamp <= latestHistoryPoint.timestamp - DAY_MS);
+
+    if (referenceHistoryPoint) {
+      dayChangeValue = latestHistoryPoint.balance - referenceHistoryPoint.balance;
+      dayChangePercent =
+        referenceHistoryPoint.balance !== 0
+          ? (dayChangeValue / referenceHistoryPoint.balance) * 100
+          : 0;
+    } else {
+      dayChangeValue = 0;
+      dayChangePercent = 0;
+    }
+  }
 
   const transactions: SnapshotTransaction[] = trades
     .slice()
@@ -653,6 +718,7 @@ export function buildPortfolioSnapshot(
     cashBalance,
     totalValue,
     totalCost,
+    totalUnrealizedPnL,
     initialDeposit,
     dayChangeValue,
     dayChangePercent,

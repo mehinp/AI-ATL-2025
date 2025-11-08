@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import Navbar from "@/components/Navbar";
 import StockHoldingCard from "@/components/portfolio/StockHoldingCard";
 import PerformanceChart from "@/components/portfolio/PerformanceChart";
@@ -7,6 +6,7 @@ import PortfolioStats from "@/components/portfolio/PortfolioStats";
 import { useMarketNavigation } from "@/hooks/useMarketNavigation";
 import { usePortfolio, useTrade } from "@/hooks/usePortfolio";
 import { useTeams } from "@/hooks/useTeams";
+import { usePortfolioValueHistory } from "@/hooks/usePortfolioValueHistory";
 import { buildPortfolioSnapshot, type EnrichedHolding } from "@/lib/portfolio-utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -15,12 +15,14 @@ export default function Portfolio() {
   const navigateToMarket = useMarketNavigation();
   const { data: portfolioData, isLoading: isPortfolioLoading } = usePortfolio();
   const { data: teams, isLoading: isTeamsLoading } = useTeams();
+  const { data: portfolioHistory } = usePortfolioValueHistory();
   const tradeMutation = useTrade();
   const { toast } = useToast();
 
-  const snapshot = useMemo(
-    () => buildPortfolioSnapshot(portfolioData, teams),
-    [portfolioData, teams],
+  const snapshot = buildPortfolioSnapshot(
+    portfolioData,
+    teams,
+    portfolioHistory?.history ?? [],
   );
 
   const holdingsLoading = isPortfolioLoading || isTeamsLoading;
@@ -106,6 +108,7 @@ export default function Portfolio() {
                   totalValue={snapshot.totalValue}
                   totalCost={snapshot.totalCost}
                   cashBalance={snapshot.cashBalance}
+                  totalPnL={snapshot.totalUnrealizedPnL}
                   initialDeposit={snapshot.initialDeposit}
                   dayChange={snapshot.dayChangeValue}
                   dayChangePercent={snapshot.dayChangePercent}

@@ -1,15 +1,22 @@
 import { Card } from "@/components/ui/card";
 import { useMemo, useState } from "react";
-import StockChart, { ChartRange } from "@/components/market/StockChart";
+import StockChart from "@/components/market/StockChart";
 import { usePortfolioValueHistory } from "@/hooks/usePortfolioValueHistory";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { PortfolioLiveHistoryPoint } from "@/lib/api";
+import { ChartRange, filterPointsByRange } from "@/lib/chart-range";
 
 export default function PerformanceChart() {
-  const [range, setRange] = useState<ChartRange>("ALL");
+  const [range, setRange] = useState<ChartRange>("1D");
   const { data: portfolioHistory, isLoading, error } = usePortfolioValueHistory();
 
-  const { chartData, latestValue, weekChangePercent, monthChangePercent, priceDomain } =
-    useMemo(() => {
+  const {
+    chartData,
+    latestValue,
+    weekChangePercent,
+    monthChangePercent,
+    priceDomain,
+  } = useMemo(() => {
       if (!portfolioHistory || !portfolioHistory.history.length) {
         return {
           chartData: [],
@@ -24,24 +31,32 @@ export default function PerformanceChart() {
       const WEEK_MS = DAY_MS * 7;
       const MONTH_MS = WEEK_MS * 4;
 
-      // Convert history to chart format
-      const normalized = portfolioHistory.history.map((point) => {
-        const timestamp = new Date(point.timestamp).getTime();
-        const totalValue = parseFloat(point.total_value);
-        
-        const dateLabel = new Date(timestamp).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-        });
-        
+      const historyPoints = portfolioHistory.history
+        .map((point: PortfolioLiveHistoryPoint) => {
+          const timestamp = new Date(point.timestamp).getTime();
+          const balance = parseFloat(point.balance ?? "0");
+          if (Number.isNaN(timestamp) || !Number.isFinite(balance)) return null;
+          return {
+            time: new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+            price: balance,
+            timestamp,
+          };
+        })
+        .filter((point): point is { time: string; price: number; timestamp: number } => Boolean(point))
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      if (!historyPoints.length) {
         return {
-          time: dateLabel,
-          price: totalValue,
-          timestamp,
-          cashBalance: parseFloat(point.cash_balance),
-          holdingsValue: parseFloat(point.holdings_value),
+          chartData: [],
+          latestValue: 0,
+          weekChangePercent: null,
+          monthChangePercent: null,
+          priceDomain: undefined,
         };
-      });
+      }
+
+      type ChartPoint = (typeof historyPoints)[number];
+      const normalized = historyPoints;
 
       const latest = normalized[normalized.length - 1];
       const latestTs = latest?.timestamp ?? Date.now();
@@ -72,20 +87,26 @@ export default function PerformanceChart() {
       const weekRef = referenceFor(normalized, WEEK_MS, latestTs);
       const monthRef = referenceFor(normalized, MONTH_MS, latestTs);
 
-      const values = normalized.map((point) => point.price);
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const padding = Math.max((max - min) * 0.1, min * 0.05 || 10);
-      const domain: [number, number] = [Math.max(0, min - padding), max + padding];
+      const filtered = filterPointsByRange(normalized, range);
+      const displayPoints = filtered.length ? filtered : normalized.slice(-1);
+
+      const values = displayPoints.map((point) => point.price);
+      const max = Math.max(...values, 0);
+      const min = Math.min(...values, max);
+      const padding = Math.max((max - min || max || 1) * 0.05, 5);
+      const domain: [number, number] = [
+        Math.max(0, min - padding),
+        Math.max(max + padding, min + padding),
+      ];
 
       return {
-        chartData: normalized,
+        chartData: displayPoints,
         latestValue: latest?.price ?? 0,
         weekChangePercent: changeFrom(latest?.price ?? 0, weekRef),
         monthChangePercent: changeFrom(latest?.price ?? 0, monthRef),
         priceDomain: domain,
       };
-    }, [portfolioHistory]);
+    }, [portfolioHistory, range]);
 
   if (isLoading) {
     return (
@@ -122,18 +143,12 @@ export default function PerformanceChart() {
     );
   }
 
-  const hasCurrentTotalValue =
-    portfolioHistory?.current_total_value != null &&
-    portfolioHistory.current_total_value !== "" &&
-    Number.isFinite(Number(portfolioHistory.current_total_value));
-  const displayPrice = hasCurrentTotalValue
-    ? Number(portfolioHistory?.current_total_value)
-    : latestValue;
+  const displayPrice = latestValue;
 
   return (
     <Card className="p-6" data-testid="performance-chart">
       <StockChart
-        teamName="Portfolio Value"
+        teamName="Total Account Value"
         data={chartData}
         range={range}
         onRangeChange={setRange}

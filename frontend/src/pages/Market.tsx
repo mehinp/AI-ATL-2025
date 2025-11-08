@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Navbar from "@/components/Navbar";
-import StockChart, { ChartRange } from "@/components/market/StockChart";
+import StockChart from "@/components/market/StockChart";
+import { ChartRange, filterPointsByRange } from "@/lib/chart-range";
 import { useTeams } from "@/hooks/useTeams";
 import { getTeamAbbreviation, getTeamDivision } from "@/lib/utils";
 import { findTeamMetadata } from "@/data/team-metadata";
@@ -64,7 +65,7 @@ export default function Market() {
   const [location] = useLocation();
   const { data: teams, isLoading, isError, error } = useTeams();
   const [selectedTeamName, setSelectedTeamName] = useState<string | null>(null);
-  const [chartRange, setChartRange] = useState<ChartRange>("1W");
+  const [chartRange, setChartRange] = useState<ChartRange>("1D");
   const [orderType, setOrderType] = useState<"buy" | "sell">("buy");
   const [quantity, setQuantity] = useState(1);
   const [pendingAction, setPendingAction] = useState<"buy" | "sell" | null>(null);
@@ -201,13 +202,14 @@ export default function Market() {
   });
 
   const chartData = useMemo(() => {
+    if (!selectedTeam) return [];
+
     if (!historyData || historyData.length === 0) {
-      if (!selectedTeam) return [];
       return [
         {
-          time: new Date().toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
+          time: new Date().toLocaleTimeString(undefined, {
+            hour: "2-digit",
+            minute: "2-digit",
           }),
           price: selectedTeam.price,
           timestamp: Date.now(),
@@ -227,9 +229,11 @@ export default function Market() {
         return {
           time:
             entryDate && !Number.isNaN(entryDate.getTime())
-              ? entryDate.toLocaleDateString(undefined, {
+              ? entryDate.toLocaleString(undefined, {
                   month: "short",
                   day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
                 })
               : PLACEHOLDER,
           price: pointPrice,
@@ -237,23 +241,12 @@ export default function Market() {
         };
       });
 
-    const latestTs = points[points.length - 1]?.timestamp ?? Date.now();
     const firstNonZeroIndex = points.findIndex((point) => point.price > 0);
     const trimmedPoints =
       firstNonZeroIndex > 0 ? points.slice(firstNonZeroIndex) : points;
 
-    const threshold =
-      chartRange === "ALL"
-        ? null
-        : chartRange === "1W"
-          ? latestTs - WEEK_MS
-          : latestTs - MONTH_MS;
-    const filtered = threshold
-      ? trimmedPoints.filter(
-          (point) => point.timestamp === null || point.timestamp >= threshold,
-        )
-      : trimmedPoints;
-    return filtered.length ? filtered : points.slice(-1);
+    const filtered = filterPointsByRange(trimmedPoints, chartRange);
+    return filtered.length ? filtered : trimmedPoints.slice(-1);
   }, [historyData, selectedTeam, chartRange]);
 
   const handleQuantityChange = (value: number) => {

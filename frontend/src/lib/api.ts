@@ -1,4 +1,4 @@
-const DEFAULT_API_URL = "https://alina-semimagical-dissentingly.ngrok-free.dev";
+const DEFAULT_API_URL = "https://margo-unamicable-unmaterially.ngrok-free.dev";
 const API_URL = (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
 const AUTH_TOKEN_KEY = "nflxchange.token";
 const AUTH_USER_ID_KEY = "nflxchange.userId";
@@ -199,8 +199,12 @@ export function executeTrade(action: TradeAction, payload: TradePayload) {
 export interface PortfolioPosition {
   team_name: string;
   quantity: number;
-  avg_price: string;
-  avg_buy_price?: string;
+  avg_price?: string;
+  avg_buy_price: string;
+  current_price: string;
+  position_value: string;
+  cost_basis: string;
+  unrealized_pnl: string;
   last_transaction: string;
 }
 
@@ -215,9 +219,11 @@ export interface PortfolioTrade {
 }
 
 export interface PortfolioResponse {
-  balance: string;
-  initial_deposit?: string;
   positions: PortfolioPosition[];
+  total_value: string;
+  total_unrealized_pnl: string;
+  balance?: string;
+  initial_deposit?: string;
   trades?: PortfolioTrade[];
 }
 
@@ -225,20 +231,26 @@ export function fetchPortfolio() {
   return request<PortfolioResponse>("/trades/portfolio");
 }
 
-export interface PortfolioValuePoint {
+export interface PortfolioLiveHistoryPoint {
   timestamp: string;
-  cash_balance: string;
-  holdings_value: string;
-  total_value: string;
+  balance: string;
 }
 
-export interface PortfolioValueHistory {
+export interface PortfolioLiveHistoryResponse {
   user_id: number;
-  initial_deposit: string;
-  current_total_value: string;
-  history: PortfolioValuePoint[];
+  history: PortfolioLiveHistoryPoint[];
+}
+
+export interface PortfolioCurrentBalance {
+  timestamp?: string;
+  balance?: string;
+  message?: string;
 }
 
 export function fetchPortfolioHistory() {
-  return request<PortfolioValueHistory>("/trades/portfolio/history");
+  return request<PortfolioLiveHistoryResponse>("/trades/portfolio/history");
+}
+
+export function fetchPortfolioCurrentBalance() {
+  return request<PortfolioCurrentBalance>("/trades/portfolio/history/current");
 }

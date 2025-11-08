@@ -1,5 +1,6 @@
 import { useState } from "react";
-import StockChart, { type ChartRange } from "../market/StockChart";
+import StockChart from "../market/StockChart";
+import { type ChartRange } from "@/lib/chart-range";
 
 export default function StockChartExample() {
   const mockData = [
@@ -12,7 +13,7 @@ export default function StockChartExample() {
     { time: "3:00", price: 146 },
     { time: "4:00", price: 145 },
   ];
-  const [range, setRange] = useState<ChartRange>("1W");
+  const [range, setRange] = useState<ChartRange>("1D");
 
   return (
     <div className="p-6">
