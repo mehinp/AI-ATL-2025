@@ -1,39 +1,151 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import TeamStockCard from '@/components/market/TeamStockCard';
 import StockChart from '@/components/market/StockChart';
 import TradeModal from '@/components/market/TradeModal';
 import MarketFilters from '@/components/market/MarketFilters';
+import { useTeams } from '@/hooks/useTeams';
+import { getTeamAbbreviation, getTeamDivision } from '@/lib/utils';
+import { fetchTeamHistory } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Card } from '@/components/ui/card';
 
-// TODO: remove mock data
-const mockTeams = [
-  { id: '1', name: 'Kansas City Chiefs', abbreviation: 'KC', price: 145.50, changePercent: 5.23, sparkline: [140, 142, 141, 143, 145, 144, 146, 145] },
-  { id: '2', name: 'San Francisco 49ers', abbreviation: 'SF', price: 138.75, changePercent: 4.18, sparkline: [135, 136, 137, 136, 138, 139, 138, 139] },
-  { id: '3', name: 'Baltimore Ravens', abbreviation: 'BAL', price: 132.40, changePercent: -2.45, sparkline: [135, 134, 133, 134, 132, 133, 131, 132] },
-  { id: '4', name: 'Buffalo Bills', abbreviation: 'BUF', price: 125.90, changePercent: 3.67, sparkline: [122, 123, 124, 125, 126, 125, 126, 126] },
-  { id: '5', name: 'Miami Dolphins', abbreviation: 'MIA', price: 118.20, changePercent: -1.23, sparkline: [120, 119, 118, 119, 118, 119, 118, 118] },
-  { id: '6', name: 'New England Patriots', abbreviation: 'NE', price: 102.50, changePercent: 2.15, sparkline: [100, 101, 102, 101, 102, 103, 102, 103] },
-  { id: '7', name: 'Dallas Cowboys', abbreviation: 'DAL', price: 135.80, changePercent: 1.89, sparkline: [133, 134, 135, 134, 136, 135, 136, 136] },
-  { id: '8', name: 'Philadelphia Eagles', abbreviation: 'PHI', price: 142.30, changePercent: 3.42, sparkline: [138, 139, 140, 141, 142, 141, 142, 142] },
-];
+type NormalizedTeam = {
+  id: string;
+  name: string;
+  abbreviation: string;
+  price: number;
+  value?: number;
+  volume?: number;
+  division: string;
+  timestamp?: string;
+};
 
-const mockChartData = [
-  { time: '9:00', price: 140 },
-  { time: '10:00', price: 142 },
-  { time: '11:00', price: 141 },
-  { time: '12:00', price: 143 },
-  { time: '1:00', price: 145 },
-  { time: '2:00', price: 144 },
-  { time: '3:00', price: 146 },
-  { time: '4:00', price: 145 },
-];
+const toNumber = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toOptionalNumber = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
 
 export default function Market() {
-  const [selectedTeam, setSelectedTeam] = useState<typeof mockTeams[0] | null>(null);
+  const { data: teams, isLoading, isError, error } = useTeams();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [divisionFilter, setDivisionFilter] = useState('All');
+  const [selectedTeamName, setSelectedTeamName] = useState<string | null>(null);
   const [tradeModalOpen, setTradeModalOpen] = useState(false);
 
-  const handleTradeClick = (team: typeof mockTeams[0]) => {
-    setSelectedTeam(team);
+  const normalizedTeams = useMemo<NormalizedTeam[]>(() => {
+    if (!teams) return [];
+
+    const latestByTeam = new Map<string, (typeof teams)[number] & { __index: number }>();
+
+    teams.forEach((team, index) => {
+      const existing = latestByTeam.get(team.team_name);
+      const currentTimestamp = team.timestamp ? new Date(team.timestamp).getTime() : -Infinity;
+      const existingTimestamp = existing?.timestamp
+        ? new Date(existing.timestamp).getTime()
+        : -Infinity;
+
+      if (!existing || currentTimestamp >= existingTimestamp) {
+        latestByTeam.set(team.team_name, { ...team, __index: index });
+      }
+    });
+
+    return Array.from(latestByTeam.values())
+      .map((team, index) => {
+        const name = team.team_name;
+        return {
+          id: `${team.team_name}-${team.timestamp ?? index}`,
+          name,
+          abbreviation: getTeamAbbreviation(name),
+          price: toNumber(team.price),
+          value: toOptionalNumber(team.value),
+          volume: toOptionalNumber(team.volume),
+          division: getTeamDivision(name),
+          timestamp: team.timestamp,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [teams]);
+
+  useEffect(() => {
+    if (!selectedTeamName && normalizedTeams.length > 0) {
+      setSelectedTeamName(normalizedTeams[0].name);
+    }
+  }, [normalizedTeams, selectedTeamName]);
+
+  const selectedTeam = useMemo(
+    () => normalizedTeams.find((team) => team.name === selectedTeamName) ?? null,
+    [normalizedTeams, selectedTeamName]
+  );
+
+  const filteredTeams = useMemo(() => {
+    return normalizedTeams.filter((team) => {
+      const matchesSearch = team.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesDivision = divisionFilter === 'All' || team.division === divisionFilter;
+      return matchesSearch && matchesDivision;
+    });
+  }, [normalizedTeams, searchTerm, divisionFilter]);
+
+  const topVolumeTeams = useMemo(() => {
+    return [...filteredTeams]
+      .sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
+      .slice(0, 3);
+  }, [filteredTeams]);
+
+  const topVolumeDisplay: (NormalizedTeam | null)[] = useMemo(
+    () => (isLoading ? Array.from({ length: 3 }, () => null) : topVolumeTeams),
+    [isLoading, topVolumeTeams],
+  );
+
+  const { data: historyData, isLoading: isHistoryLoading } = useQuery({
+    queryKey: ['team-history', selectedTeam?.name],
+    queryFn: () => fetchTeamHistory(selectedTeam!.name),
+    enabled: Boolean(selectedTeam?.name),
+    staleTime: 15000,
+  });
+
+  const chartData = useMemo(() => {
+    if (!historyData || historyData.length === 0) {
+      if (!selectedTeam) return [];
+      return [
+        {
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          price: selectedTeam.price,
+        },
+      ];
+    }
+
+    return historyData
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(a.timestamp ?? 0).getTime() - new Date(b.timestamp ?? 0).getTime()
+      )
+      .map((entry) => {
+        const entryDate = entry.timestamp ? new Date(entry.timestamp) : null;
+        const label =
+          entryDate && !Number.isNaN(entryDate.getTime())
+            ? entryDate.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            : '—';
+
+        return {
+          time: label,
+          price: toNumber(entry.price),
+        };
+      });
+  }, [historyData, selectedTeam]);
+
+  const handleTradeClick = (team: NormalizedTeam) => {
+    setSelectedTeamName(team.name);
     setTradeModalOpen(true);
   };
 
@@ -44,54 +156,86 @@ export default function Market() {
         <div className="space-y-6">
           <div>
             <h1 className="text-3xl font-bold mb-2">Market</h1>
-            <p className="text-muted-foreground">Browse and trade NFL team stocks</p>
+            <p className="text-muted-foreground">Browse and trade NFL team stocks powered by the FastAPI backend.</p>
           </div>
 
           <MarketFilters
-            onSearchChange={(value) => console.log('Search:', value)}
-            onDivisionChange={(division) => console.log('Division:', division)}
+            onSearchChange={setSearchTerm}
+            onDivisionChange={(division) => setDivisionFilter(division)}
           />
+
+          {isError && (
+            <Card className="p-4 border-destructive/50 bg-destructive/10 text-destructive">
+              Unable to load team data: {(error as Error)?.message ?? 'Unknown error'}
+            </Card>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2">
-              <StockChart teamName="Kansas City Chiefs" data={mockChartData} />
+              {selectedTeam ? (
+                isHistoryLoading ? (
+                  <Skeleton className="h-96 w-full" />
+                ) : (
+                  <StockChart teamName={selectedTeam.name} data={chartData} />
+                )
+              ) : (
+                <Card className="p-6 h-96 flex items-center justify-center text-muted-foreground">
+                  Select a team to view its price history.
+                </Card>
+              )}
             </div>
 
             <div className="lg:col-span-1">
-              <h2 className="text-xl font-semibold mb-4">Top Movers</h2>
+              <h2 className="text-xl font-semibold mb-4">Highest Volume</h2>
               <div className="space-y-3">
-                {mockTeams.slice(0, 3).map((team) => (
-                  <div
-                    key={team.id}
-                    className="p-3 rounded-lg border bg-card hover-elevate cursor-pointer"
-                    onClick={() => handleTradeClick(team)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">{team.abbreviation}</span>
-                      <div className="text-right">
-                        <div className="font-mono text-sm">${team.price.toFixed(2)}</div>
-                        <div className={`text-xs ${team.changePercent >= 0 ? 'text-success' : 'text-danger'}`}>
-                          {team.changePercent >= 0 ? '+' : ''}{team.changePercent.toFixed(2)}%
+                {topVolumeDisplay.map((team, index) =>
+                  team ? (
+                    <div
+                      key={team.id}
+                      className="p-3 rounded-lg border bg-card hover-elevate cursor-pointer"
+                      onClick={() => handleTradeClick(team)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{team.abbreviation}</span>
+                        <div className="text-right">
+                          <div className="font-mono text-sm">${team.price.toFixed(2)}</div>
+                          <div className="text-xs text-muted-foreground">
+                            Volume: {team.volume ? team.volume.toLocaleString() : '—'}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ) : (
+                    <Skeleton key={index} className="h-16 w-full rounded-lg" />
+                  )
+                )}
               </div>
             </div>
           </div>
 
           <div>
             <h2 className="text-xl font-semibold mb-4">All Teams</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {mockTeams.map((team) => (
-                <TeamStockCard
-                  key={team.id}
-                  team={team}
-                  onTrade={() => handleTradeClick(team)}
-                />
-              ))}
-            </div>
+            {isLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {Array.from({ length: 8 }).map((_, index) => (
+                  <Skeleton key={index} className="h-48 w-full rounded-lg" />
+                ))}
+              </div>
+            ) : filteredTeams.length === 0 ? (
+              <Card className="p-6 text-center text-muted-foreground">
+                No teams match the current filters.
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {filteredTeams.map((team) => (
+                  <TeamStockCard
+                    key={team.id}
+                    team={team}
+                    onTrade={() => handleTradeClick(team)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </main>

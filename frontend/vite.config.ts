@@ -17,6 +17,7 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    cors: true,
     fs: {
       strict: true,
       deny: ["**/.*"],

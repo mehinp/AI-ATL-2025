@@ -1,4 +1,4 @@
-import { Card } from '@/components/ui/card';
+﻿import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import TeamLogo from '../shared/TeamLogo';
 import PercentageChange from '../shared/PercentageChange';
@@ -75,3 +75,4 @@ export default function LiveGameCard({ game, onClick }: LiveGameCardProps) {
     </Card>
   );
 }
+

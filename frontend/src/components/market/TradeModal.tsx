@@ -20,7 +20,7 @@ interface TradeModalProps {
     name: string;
     abbreviation: string;
     price: number;
-    changePercent: number;
+    changePercent?: number | null;
   };
 }
 
@@ -49,7 +49,9 @@ export default function TradeModal({ open, onClose, team }: TradeModalProps) {
               <div className="font-semibold">{team.name}</div>
               <div className="flex items-center gap-2 mt-1">
                 <PriceDisplay price={team.price} size="sm" />
-                <PercentageChange value={team.changePercent} />
+                {typeof team.changePercent === 'number' && (
+                  <PercentageChange value={team.changePercent} />
+                )}
               </div>
             </div>
           </div>

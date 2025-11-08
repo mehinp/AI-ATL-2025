@@ -3,7 +3,7 @@ import { LayoutDashboard, Radio, Briefcase, TrendingUp } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 
 const navItems = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/live', label: 'Live Data', icon: Radio },
   { path: '/portfolio', label: 'Portfolio', icon: Briefcase },
   { path: '/market', label: 'Market', icon: TrendingUp },
@@ -17,9 +17,20 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-8">
-            <div className="font-bold text-xl">
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-2 font-bold text-xl text-foreground"
+              aria-label="NFLXchange home"
+            >
+              <img
+                src="/logo.svg"
+                alt="NFLXchange logo"
+                className="h-9 w-auto transition-[filter] duration-200 dark:invert"
+                loading="eager"
+                decoding="async"
+              />
               <span className="text-primary">NFLXchange</span>
-            </div>
+            </Link>
             
             <div className="hidden md:flex items-center gap-1">
               {navItems.map((item) => {

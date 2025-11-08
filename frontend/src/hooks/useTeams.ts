@@ -3,8 +3,8 @@ import { fetchTeams } from '@/lib/api';
 
 export function useTeams() {
   return useQuery({
-    queryKey: ['/api/teams'],
+    queryKey: ['all-teams'],
     queryFn: fetchTeams,
-    staleTime: 30000, // 30 seconds
+    staleTime: 30000,
   });
 }

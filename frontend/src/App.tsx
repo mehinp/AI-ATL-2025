@@ -8,11 +8,13 @@ import Live from "@/pages/Live";
 import Portfolio from "@/pages/Portfolio";
 import Market from "@/pages/Market";
 import NotFound from "@/pages/not-found";
+import Onboarding from "@/pages/Onboarding";
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/" component={Onboarding} />
+      <Route path="/dashboard" component={Dashboard} />
       <Route path="/live" component={Live} />
       <Route path="/portfolio" component={Portfolio} />
       <Route path="/market" component={Market} />
