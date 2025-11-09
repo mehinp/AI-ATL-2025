@@ -374,27 +374,3 @@ async def get_recomputed_history(current_user: User = Depends(get_current_user),
     return {"user_id": current_user.id, "history": history}
 
 
-# ============================================================
-# /trades/instruments
-# ============================================================
-@router.get("/instruments")
-async def list_instruments(db: AsyncSession = Depends(get_db)):
-    """Return all tradable instruments (teams + ETFs) with latest prices."""
-    res = await db.execute(select(TeamMarketInformation))
-    rows = res.scalars().all()
-
-    latest = {}
-    for r in rows:
-        if r.team_name not in latest or r.timestamp > latest[r.team_name].timestamp:
-            latest[r.team_name] = r
-
-    instruments = []
-    for name, rec in latest.items():
-        instruments.append({
-            "name": name,
-            "price": f"{rec.value:.2f}",
-            "timestamp": rec.timestamp,
-            "type": "ETF" if is_etf(name) else "Team"
-        })
-
-    return sorted(instruments, key=lambda x: x["name"])
