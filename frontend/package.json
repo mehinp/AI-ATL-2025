@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "start": "serve -s dist -l $PORT",
+    "start": "serve -s dist -l tcp://0.0.0.0:$PORT",
     "check": "tsc",
     "db:push": "drizzle-kit push"
   },
