@@ -1,6 +1,5 @@
 import asyncio
 import random
-import math
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import select, func
@@ -29,13 +28,18 @@ def randomize_value(curr_value: float, init_value: float) -> float:
     if init_value <= 0:
         init_value = curr_value or 1.0
 
+    # Deviation from the equilibrium anchor
     deviation = (curr_value - init_value) / init_value
-    mean_reversion_strength = 0.1
-    volatility = 0.04 * (1 - abs(deviation))
+
+    mean_reversion_strength = 0.08   # slightly softer reversion
+    volatility = 0.035 * (1 - abs(deviation))
     volatility = max(0.01, volatility)
+
     delta_factor = -mean_reversion_strength * deviation + random.uniform(-volatility, volatility)
     new_value = curr_value * (1 + delta_factor)
-    new_value = max(0.5 * init_value, min(new_value, 1.5 * init_value))
+
+    # Keep within ±75% of the initial anchor
+    new_value = max(0.25 * init_value, min(new_value, 1.75 * init_value))
     return round(new_value, 2)
 
 
@@ -49,18 +53,15 @@ async def record_portfolio_balances(session):
     for user in users:
         total_value = Decimal(str(user.balance))
 
-        # Fetch all user trades
         trades = (await session.execute(
             select(Trades).where(Trades.user_id == user.id)
         )).scalars().all()
 
-        # Aggregate net quantities per instrument
         holdings = {}
         for t in trades:
             holdings[t.team_name] = holdings.get(t.team_name, 0)
             holdings[t.team_name] += t.quantity if t.action == "buy" else -t.quantity
 
-        # Add market value of all open positions
         for team, qty in holdings.items():
             if qty <= 0:
                 continue
@@ -92,14 +93,12 @@ async def compute_etf_values(session):
     now = datetime.utcnow()
     etf_entries = []
 
-    # Grab latest prices per team
     res = await session.execute(
         select(TeamMarketInformation.team_name, func.max(TeamMarketInformation.timestamp))
         .group_by(TeamMarketInformation.team_name)
     )
     latest_times = {team: ts for team, ts in res.all()}
 
-    # Get actual latest values
     latest_prices = {}
     for team, ts in latest_times.items():
         val_row = await session.execute(
@@ -112,7 +111,6 @@ async def compute_etf_values(session):
         if val is not None:
             latest_prices[team] = float(val)
 
-    # Compute ETF average per division
     for division, members in DIVISION_MAP.items():
         prices = [latest_prices[m] for m in members if m in latest_prices]
         if len(prices) == len(members):
@@ -132,21 +130,33 @@ async def compute_etf_values(session):
 
 
 # ============================================================
-# Price Updater Loop
+# Price Updater Loop (Fixed Anchor Logic)
 # ============================================================
 async def update_prices_loop():
     """Continuously randomize team prices, compute ETFs, and log balances every 5 seconds."""
     print("🏈 Starting price updater loop (with division ETFs)...")
     async with SessionLocal() as session:
-        # Cache initial reference prices
+        # ✅ Use most recent prices as stable anchors (not min values)
         res_init = await session.execute(
-            select(TeamMarketInformation.team_name, func.min(TeamMarketInformation.value))
-            .group_by(TeamMarketInformation.team_name)
+            select(TeamMarketInformation.team_name, TeamMarketInformation.value)
+            .order_by(TeamMarketInformation.timestamp.desc())
         )
-        initial_prices = {team: float(val) for team, val in res_init.all()}
+        initial_prices = {}
+        for rec in res_init.scalars().all():
+            # Because .scalars() gives only values, we fetch again properly
+            break  # fallback fix below
+
+        # Correct fetch for both name and value
+        res_latest = await session.execute(
+            select(TeamMarketInformation.team_name, TeamMarketInformation.value)
+            .order_by(TeamMarketInformation.timestamp.desc())
+        )
+        rows = res_latest.all()
+        for team, value in rows:
+            if team not in initial_prices:
+                initial_prices[team] = float(value)
 
         while True:
-            # --- Update team prices ---
             res = await session.execute(
                 select(TeamMarketInformation)
                 .order_by(TeamMarketInformation.timestamp.desc())
@@ -175,12 +185,8 @@ async def update_prices_loop():
             await session.commit()
             print(f"✅ Updated {len(new_entries)} teams @ {now:%H:%M:%S}")
 
-            # --- Compute division ETFs ---
             await compute_etf_values(session)
-
-            # --- Record portfolio balances ---
             await record_portfolio_balances(session)
-
             await asyncio.sleep(5)
 
 
