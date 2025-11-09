@@ -30,7 +30,7 @@ app.include_router(trades.router)
 @app.on_event("startup")
 async def start_price_updater():
     """Launch background task that randomizes team prices and logs balances."""
-    print("🚀 Launching background price updater loop...")
+    print("Launching background price updater loop...")
     asyncio.create_task(update_prices_loop())
 
 # ---------------------------
