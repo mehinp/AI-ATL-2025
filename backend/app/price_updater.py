@@ -8,32 +8,34 @@ from app.database import SessionLocal
 from app.models import User, Trades, TeamMarketInformation, PortfolioHistory
 
 # ============================================================
+# Division ETF Mapping (use your city names exactly)
+# ============================================================
+DIVISION_MAP = {
+    "AFC North": ["Baltimore", "Cincinnati", "Cleveland", "Pittsburgh"],
+    "AFC South": ["Houston", "Indianapolis", "Jacksonville", "Tennessee"],
+    "AFC East": ["Buffalo", "Miami", "New England", "New York J"],
+    "AFC West": ["Denver", "Kansas City", "Las Vegas", "Los Angeles C"],
+    "NFC North": ["Chicago", "Detroit", "Green Bay", "Minnesota"],
+    "NFC South": ["Atlanta", "Carolina", "New Orleans", "Tampa Bay"],
+    "NFC East": ["Dallas", "New York G", "Philadelphia", "Washington"],
+    "NFC West": ["Arizona", "Los Angeles R", "San Francisco", "Seattle"],
+}
+
+# ============================================================
 # Random Price Fluctuation (Mean-Reverting, No Drift)
 # ============================================================
 def randomize_value(curr_value: float, init_value: float) -> float:
     """Return a mean-reverting, bounded random price with stable long-term behavior."""
     if init_value <= 0:
-        init_value = curr_value or 1.0  # safety fallback
+        init_value = curr_value or 1.0
 
-    # Deviation from anchor price
     deviation = (curr_value - init_value) / init_value
-
-    # Mean reversion strength — how fast it pulls toward the anchor
     mean_reversion_strength = 0.1
-
-    # Volatility decreases as price diverges from initial value
     volatility = 0.04 * (1 - abs(deviation))
-    volatility = max(0.01, volatility)  # ensure some baseline movement
-
-    # Mean-reverting random change
+    volatility = max(0.01, volatility)
     delta_factor = -mean_reversion_strength * deviation + random.uniform(-volatility, volatility)
-
-    # Apply change multiplicatively
     new_value = curr_value * (1 + delta_factor)
-
-    # Keep prices within ±50% of the initial anchor
     new_value = max(0.5 * init_value, min(new_value, 1.5 * init_value))
-
     return round(new_value, 2)
 
 
@@ -52,7 +54,7 @@ async def record_portfolio_balances(session):
             select(Trades).where(Trades.user_id == user.id)
         )).scalars().all()
 
-        # Aggregate net quantities per team
+        # Aggregate net quantities per instrument
         holdings = {}
         for t in trades:
             holdings[t.team_name] = holdings.get(t.team_name, 0)
@@ -72,7 +74,6 @@ async def record_portfolio_balances(session):
             if price:
                 total_value += Decimal(str(price)) * qty
 
-        # Insert portfolio snapshot
         session.add(PortfolioHistory(
             user_id=user.id,
             balance=float(total_value),
@@ -84,13 +85,60 @@ async def record_portfolio_balances(session):
 
 
 # ============================================================
+# ETF Computation Helper
+# ============================================================
+async def compute_etf_values(session):
+    """Compute each division ETF as the average of its member team prices."""
+    now = datetime.utcnow()
+    etf_entries = []
+
+    # Grab latest prices per team
+    res = await session.execute(
+        select(TeamMarketInformation.team_name, func.max(TeamMarketInformation.timestamp))
+        .group_by(TeamMarketInformation.team_name)
+    )
+    latest_times = {team: ts for team, ts in res.all()}
+
+    # Get actual latest values
+    latest_prices = {}
+    for team, ts in latest_times.items():
+        val_row = await session.execute(
+            select(TeamMarketInformation.value)
+            .where(TeamMarketInformation.team_name == team)
+            .order_by(TeamMarketInformation.timestamp.desc())
+            .limit(1)
+        )
+        val = val_row.scalar_one_or_none()
+        if val is not None:
+            latest_prices[team] = float(val)
+
+    # Compute ETF average per division
+    for division, members in DIVISION_MAP.items():
+        prices = [latest_prices[m] for m in members if m in latest_prices]
+        if len(prices) == len(members):
+            avg_val = round(sum(prices) / len(prices), 2)
+            etf_entries.append(TeamMarketInformation(
+                team_name=division,
+                value=avg_val,
+                timestamp=now
+            ))
+        else:
+            missing = [m for m in members if m not in latest_prices]
+            print(f"⚠️ Missing prices for {division}: {missing}")
+
+    session.add_all(etf_entries)
+    await session.commit()
+    print(f"📊 Computed {len(etf_entries)} division ETFs @ {now:%H:%M:%S}")
+
+
+# ============================================================
 # Price Updater Loop
 # ============================================================
 async def update_prices_loop():
-    """Continuously randomize team prices and log balances every 5 seconds."""
-    print("🏈 Starting price updater loop...")
+    """Continuously randomize team prices, compute ETFs, and log balances every 5 seconds."""
+    print("🏈 Starting price updater loop (with division ETFs)...")
     async with SessionLocal() as session:
-        # Cache each team’s initial reference price
+        # Cache initial reference prices
         res_init = await session.execute(
             select(TeamMarketInformation.team_name, func.min(TeamMarketInformation.value))
             .group_by(TeamMarketInformation.team_name)
@@ -98,6 +146,7 @@ async def update_prices_loop():
         initial_prices = {team: float(val) for team, val in res_init.all()}
 
         while True:
+            # --- Update team prices ---
             res = await session.execute(
                 select(TeamMarketInformation)
                 .order_by(TeamMarketInformation.timestamp.desc())
@@ -126,7 +175,10 @@ async def update_prices_loop():
             await session.commit()
             print(f"✅ Updated {len(new_entries)} teams @ {now:%H:%M:%S}")
 
-            # Record portfolio balance snapshots
+            # --- Compute division ETFs ---
+            await compute_etf_values(session)
+
+            # --- Record portfolio balances ---
             await record_portfolio_balances(session)
 
             await asyncio.sleep(5)

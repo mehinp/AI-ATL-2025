@@ -11,9 +11,9 @@ from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/trades", tags=["Trades"])
 
-# ---------------------------
+# ============================================================
 # Schemas
-# ---------------------------
+# ============================================================
 class BuyIn(BaseModel):
     team_name: str
     quantity: int = Field(gt=0)
@@ -28,6 +28,7 @@ class TradeOut(BaseModel):
     quantity: int
     price: str
     balance: str
+    type: str | None = None
     message: str | None = None
 
 class PositionOut(BaseModel):
@@ -39,6 +40,7 @@ class PositionOut(BaseModel):
     cost_basis: str
     unrealized_pnl: str
     last_transaction: str
+    type: str | None = None
 
 class PortfolioOut(BaseModel):
     positions: list[PositionOut]
@@ -46,19 +48,28 @@ class PortfolioOut(BaseModel):
     total_unrealized_pnl: str
 
 
-# ---------------------------
-# Database dependency
-# ---------------------------
+# ============================================================
+# DB dependency
+# ============================================================
 async def get_db():
     async with SessionLocal() as session:
         yield session
 
 
-# ---------------------------
+# ============================================================
 # Helpers
-# ---------------------------
+# ============================================================
+DIVISIONS = {
+    "AFC North", "AFC South", "AFC East", "AFC West",
+    "NFC North", "NFC South", "NFC East", "NFC West"
+}
+
+def is_etf(name: str) -> bool:
+    return name in DIVISIONS
+
+
 async def get_current_price(db: AsyncSession, team_name: str) -> Decimal:
-    """Get the most recent market price for a team."""
+    """Get the latest market price for any instrument (team or ETF)."""
     res = await db.execute(
         select(TeamMarketInformation)
         .where(TeamMarketInformation.team_name == team_name)
@@ -72,7 +83,7 @@ async def get_current_price(db: AsyncSession, team_name: str) -> Decimal:
 
 
 async def compute_positions(db: AsyncSession, user_id: int):
-    """Compute user's current open positions and total unrealized pnl."""
+    """Compute user holdings and unrealized PnL."""
     res_trades = await db.execute(select(Trades).where(Trades.user_id == user_id))
     trades = res_trades.scalars().all()
 
@@ -108,81 +119,139 @@ async def compute_positions(db: AsyncSession, user_id: int):
         total_value += position_value
         total_unrealized += unrealized_pnl
 
-        portfolio.append(
-            PositionOut(
-                team_name=team,
-                quantity=qty,
-                avg_buy_price=f"{avg_buy_price:.2f}",
-                current_price=f"{current_price:.2f}",
-                position_value=f"{position_value:.2f}",
-                cost_basis=f"{cost_basis:.2f}",
-                unrealized_pnl=f"{unrealized_pnl:.2f}",
-                last_transaction=data["last_txn"].strftime("%Y-%m-%d %H:%M:%S"),
-            )
-        )
+        portfolio.append(PositionOut(
+            team_name=team,
+            quantity=qty,
+            avg_buy_price=f"{avg_buy_price:.2f}",
+            current_price=f"{current_price:.2f}",
+            position_value=f"{position_value:.2f}",
+            cost_basis=f"{cost_basis:.2f}",
+            unrealized_pnl=f"{unrealized_pnl:.2f}",
+            last_transaction=data["last_txn"].strftime("%Y-%m-%d %H:%M:%S"),
+            type="ETF" if is_etf(team) else "Team"
+        ))
 
     return portfolio, total_value, total_unrealized
 
 
-# ---------------------------
-# /buy and /sell
-# ---------------------------
+# ============================================================
+# /buy
+# ============================================================
 @router.post("/buy", response_model=TradeOut)
 async def buy_stock(payload: BuyIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Buy shares of a team."""
+    """Buy shares of a team or ETF."""
+    exists = await db.execute(
+        select(TeamMarketInformation.team_name)
+        .where(TeamMarketInformation.team_name == payload.team_name)
+        .limit(1)
+    )
+    if not exists.scalar_one_or_none():
+        raise HTTPException(404, detail=f"'{payload.team_name}' not found in market data")
+
     user = (await db.execute(select(User).where(User.id == current_user.id))).scalar_one()
     price = await get_current_price(db, payload.team_name)
     cost = price * payload.quantity
     balance = Decimal(str(user.balance))
+
     if balance < cost:
         raise HTTPException(400, detail=f"Insufficient balance (${balance:.2f} < ${cost:.2f})")
+
     user.balance = float(balance - cost)
-    db.add(Trades(user_id=user.id, team_name=payload.team_name, action="buy",
-                  quantity=payload.quantity, price=float(price),
-                  balance_after_trade=user.balance, timestamp=datetime.utcnow()))
+    db.add(Trades(
+        user_id=user.id,
+        team_name=payload.team_name,
+        action="buy",
+        quantity=payload.quantity,
+        price=float(price),
+        balance_after_trade=user.balance,
+        timestamp=datetime.utcnow()
+    ))
     await db.commit()
-    return TradeOut(success=True, team_name=payload.team_name, quantity=payload.quantity,
-                    price=f"{price:.2f}", balance=f"{user.balance:.2f}",
-                    message=f"Bought {payload.quantity} {payload.team_name} @ ${price:.2f}")
+
+    return TradeOut(
+        success=True,
+        team_name=payload.team_name,
+        quantity=payload.quantity,
+        price=f"{price:.2f}",
+        balance=f"{user.balance:.2f}",
+        type="ETF" if is_etf(payload.team_name) else "Team",
+        message=f"Bought {payload.quantity} {payload.team_name} @ ${price:.2f}"
+    )
 
 
+# ============================================================
+# /sell
+# ============================================================
 @router.post("/sell", response_model=TradeOut)
 async def sell_stock(payload: SellIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Sell shares of a team."""
+    """Sell shares of a team or ETF."""
+    exists = await db.execute(
+        select(TeamMarketInformation.team_name)
+        .where(TeamMarketInformation.team_name == payload.team_name)
+        .limit(1)
+    )
+    if not exists.scalar_one_or_none():
+        raise HTTPException(404, detail=f"'{payload.team_name}' not found in market data")
+
     user = (await db.execute(select(User).where(User.id == current_user.id))).scalar_one()
     res = await db.execute(select(Trades).where(Trades.user_id == user.id, Trades.team_name == payload.team_name))
     trades = res.scalars().all()
     owned_qty = sum(t.quantity if t.action == "buy" else -t.quantity for t in trades)
+
     if owned_qty < payload.quantity:
-        return TradeOut(success=False, team_name=payload.team_name, quantity=0, price="0.00",
-                        balance=f"{user.balance:.2f}",
-                        message=f"Sell failed: You only have {owned_qty} {payload.team_name}.")
+        return TradeOut(
+            success=False,
+            team_name=payload.team_name,
+            quantity=0,
+            price="0.00",
+            balance=f"{user.balance:.2f}",
+            type="ETF" if is_etf(payload.team_name) else "Team",
+            message=f"Sell failed: You only have {owned_qty} {payload.team_name}."
+        )
+
     price = await get_current_price(db, payload.team_name)
     proceeds = price * payload.quantity
     user.balance = float(Decimal(str(user.balance)) + proceeds)
-    db.add(Trades(user_id=user.id, team_name=payload.team_name, action="sell",
-                  quantity=payload.quantity, price=float(price),
-                  balance_after_trade=user.balance, timestamp=datetime.utcnow()))
+
+    db.add(Trades(
+        user_id=user.id,
+        team_name=payload.team_name,
+        action="sell",
+        quantity=payload.quantity,
+        price=float(price),
+        balance_after_trade=user.balance,
+        timestamp=datetime.utcnow()
+    ))
     await db.commit()
-    return TradeOut(success=True, team_name=payload.team_name, quantity=payload.quantity,
-                    price=f"{price:.2f}", balance=f"{user.balance:.2f}",
-                    message=f"Sold {payload.quantity} {payload.team_name} @ ${price:.2f}")
+
+    return TradeOut(
+        success=True,
+        team_name=payload.team_name,
+        quantity=payload.quantity,
+        price=f"{price:.2f}",
+        balance=f"{user.balance:.2f}",
+        type="ETF" if is_etf(payload.team_name) else "Team",
+        message=f"Sold {payload.quantity} {payload.team_name} @ ${price:.2f}"
+    )
 
 
-# ---------------------------
-# /portfolio and /portfolio:{index}
-# ---------------------------
+# ============================================================
+# /portfolio
+# ============================================================
 @router.get("/portfolio", response_model=PortfolioOut)
 async def get_all_holdings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Return all holdings with unrealized PnL."""
     portfolio, total_value, total_unrealized = await compute_positions(db, current_user.id)
-    return PortfolioOut(positions=portfolio, total_value=f"{total_value:.2f}",
-                        total_unrealized_pnl=f"{total_unrealized:.2f}")
+    return PortfolioOut(
+        positions=portfolio,
+        total_value=f"{total_value:.2f}",
+        total_unrealized_pnl=f"{total_unrealized:.2f}"
+    )
 
 
 @router.get("/portfolio:{index}", response_model=PositionOut)
 async def get_single_holding(index: int, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Return a specific holding by its index in the portfolio."""
+    """Return a specific holding by index."""
     portfolio, _, _ = await compute_positions(db, current_user.id)
     if not portfolio:
         raise HTTPException(404, detail="No holdings")
@@ -191,15 +260,12 @@ async def get_single_holding(index: int, current_user: User = Depends(get_curren
     return portfolio[index - 1]
 
 
-# ---------------------------
+# ============================================================
 # /portfolio/history (live)
-# ---------------------------
+# ============================================================
 @router.get("/portfolio/history")
 async def get_live_history(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """
-    Return real-time portfolio history from portfolio_history table.
-    Reflects balance updates every 5 seconds recorded by the background updater.
-    """
+    """Return portfolio balance history from background updater."""
     res = await db.execute(
         select(PortfolioHistory.timestamp, PortfolioHistory.balance)
         .where(PortfolioHistory.user_id == current_user.id)
@@ -216,14 +282,12 @@ async def get_live_history(current_user: User = Depends(get_current_user), db: A
     return {"user_id": current_user.id, "history": history}
 
 
-# ---------------------------
+# ============================================================
 # /portfolio/history/current
-# ---------------------------
+# ============================================================
 @router.get("/portfolio/history/current")
 async def get_current_snapshot(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """
-    Return the most recent recorded balance snapshot (latest entry in portfolio_history).
-    """
+    """Return the most recent portfolio snapshot."""
     res = await db.execute(
         select(PortfolioHistory.timestamp, PortfolioHistory.balance)
         .where(PortfolioHistory.user_id == current_user.id)
@@ -237,11 +301,11 @@ async def get_current_snapshot(current_user: User = Depends(get_current_user), d
     return {"timestamp": ts.strftime("%Y-%m-%d %H:%M:%S"), "balance": f"{bal:.2f}"}
 
 
-# ---------------------------
+# ============================================================
 # /portfolio/history/recomputed (legacy)
-# ---------------------------
+# ============================================================
 async def compute_history(db: AsyncSession, user_id: int):
-    """Recompute portfolio history from trade timestamps (legacy mode)."""
+    """Recompute portfolio history from trades."""
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
     trades = (await db.execute(select(Trades).where(Trades.user_id == user_id).order_by(Trades.timestamp.asc()))).scalars().all()
     initial = Decimal(str(user.initial_deposit))
@@ -249,15 +313,23 @@ async def compute_history(db: AsyncSession, user_id: int):
 
     if not trades:
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        return [{"timestamp": now, "initial_deposit": f"{initial:.2f}",
-                 "current_total_account_value": f"{initial:.2f}",
-                 "current_cash_balance": f"{initial:.2f}", "cost_basis": "0.00", "pnl": "0.00"}]
+        return [{
+            "timestamp": now,
+            "initial_deposit": f"{initial:.2f}",
+            "current_total_account_value": f"{initial:.2f}",
+            "current_cash_balance": f"{initial:.2f}",
+            "cost_basis": "0.00",
+            "pnl": "0.00"
+        }]
 
     async def get_price_at(team: str, t: datetime) -> Decimal:
-        res = await db.execute(select(TeamMarketInformation)
-                               .where(TeamMarketInformation.team_name == team,
-                                      TeamMarketInformation.timestamp <= t)
-                               .order_by(TeamMarketInformation.timestamp.desc()).limit(1))
+        res = await db.execute(
+            select(TeamMarketInformation)
+            .where(TeamMarketInformation.team_name == team,
+                   TeamMarketInformation.timestamp <= t)
+            .order_by(TeamMarketInformation.timestamp.desc())
+            .limit(1)
+        )
         rec = res.scalar_one_or_none()
         return Decimal(str(rec.value)) if rec and rec.value else Decimal("0")
 
@@ -267,11 +339,13 @@ async def compute_history(db: AsyncSession, user_id: int):
             holdings[team] = holdings.get(team, 0) + qty
             cost_basis[team] = cost_basis.get(team, Decimal("0")) + (price * qty)
         elif tr.action == "sell":
-            if holdings.get(team, 0) < qty: continue
+            if holdings.get(team, 0) < qty:
+                continue
             avg_cost = cost_basis.get(team, Decimal("0")) / Decimal(max(holdings[team], 1))
             holdings[team] -= qty
             cost_basis[team] -= avg_cost * qty
-            if holdings[team] <= 0: cost_basis[team] = Decimal("0")
+            if holdings[team] <= 0:
+                cost_basis[team] = Decimal("0")
 
         total_cost = sum(cost_basis.values())
         cash = initial - total_cost
@@ -289,11 +363,38 @@ async def compute_history(db: AsyncSession, user_id: int):
             "cost_basis": f"{total_cost:.2f}",
             "pnl": f"{pnl:.2f}"
         })
+
     return history
 
 
 @router.get("/portfolio/history/recomputed")
 async def get_recomputed_history(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Legacy recomputed portfolio history from trades."""
+    """Legacy recomputed portfolio history from trade records."""
     history = await compute_history(db, current_user.id)
     return {"user_id": current_user.id, "history": history}
+
+
+# ============================================================
+# /trades/instruments
+# ============================================================
+@router.get("/instruments")
+async def list_instruments(db: AsyncSession = Depends(get_db)):
+    """Return all tradable instruments (teams + ETFs) with latest prices."""
+    res = await db.execute(select(TeamMarketInformation))
+    rows = res.scalars().all()
+
+    latest = {}
+    for r in rows:
+        if r.team_name not in latest or r.timestamp > latest[r.team_name].timestamp:
+            latest[r.team_name] = r
+
+    instruments = []
+    for name, rec in latest.items():
+        instruments.append({
+            "name": name,
+            "price": f"{rec.value:.2f}",
+            "timestamp": rec.timestamp,
+            "type": "ETF" if is_etf(name) else "Team"
+        })
+
+    return sorted(instruments, key=lambda x: x["name"])
