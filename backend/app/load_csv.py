@@ -5,7 +5,7 @@ from app.database import SessionLocal
 from app.models import TeamMarketInformation
 
 async def load_csv_to_db():
-    df = pd.read_csv("team_values_formatted_no_price_volume.csv")
+    df = pd.read_csv("team_values_scaled_by_5.csv")
     print(f"Loaded {len(df)} rows from CSV")
 
     async with SessionLocal() as session:
@@ -20,7 +20,7 @@ async def load_csv_to_db():
 
             record = TeamMarketInformation(
                 team_name=row["team_name"],
-                value=float(row["value"]) * 5,
+                value=float(row["value"]),
                 timestamp=pd.to_datetime(row["timestamp"]) if "timestamp" in row else datetime.utcnow(),
             )
             session.add(record)
