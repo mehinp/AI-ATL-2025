@@ -2,20 +2,19 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
-const rootDir = import.meta.dirname;
 const liveStreamProxyTarget =
-  process.env.VITE_STREAM_PROXY_TARGET ?? "https://sunshine-laughable-unbriefly.ngrok-free.dev";
+  process.env.VITE_STREAM_PROXY_TARGET ??
+  "https://sunshine-laughable-unbriefly.ngrok-free.dev";
 
 export default defineConfig({
-  root: rootDir,
   plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(rootDir, "src"),
+      "@": path.resolve(__dirname, "src"),
     },
   },
   build: {
-    outDir: path.resolve(rootDir, "dist"),
+    outDir: "dist", // ✅ relative path so Railway can find it
     emptyOutDir: true,
   },
   server: {
@@ -29,7 +28,7 @@ export default defineConfig({
         target: liveStreamProxyTarget,
         changeOrigin: true,
         secure: false,
-        rewrite: (path) => path.replace(/^\/live-stream/, ""),
+        rewrite: (p) => p.replace(/^\/live-stream/, ""),
       },
     },
   },
